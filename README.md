@@ -1,7 +1,7 @@
 # Container Signing POC
-<!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor -->
+<!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor,containerd -->
 
-This experiment is three-fold:
+This experiment is four-fold:
 
 - [Signing images with Notation, especially with custom signers](notation/README.md)
 - [Moving signatures from one registry to another with Oras](oras/README.md)
@@ -10,6 +10,7 @@ or
 - Moving Cosign signatures from one registry to another with Cosign
 then
 - [Validating the signing with Kyverno admission controller](kyverno/README.md)
+- [Verify signatures at container runtime level](containerd/README.md)
 
 ```mermaid
 flowchart LR
@@ -53,6 +54,10 @@ Basically, the POC is finding the following:
    its services, so implementing it is not trivial.
 1. Kyverno can be used with Cosign the same as Notation, just a little bit more
    configuration needed in the manifest to disable transparency logs and SCTs.
+
+## Containerd
+
+1. Containerd can be configured to verify signatures at runtime
 
 ## e2e test
 
