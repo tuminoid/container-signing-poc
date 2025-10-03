@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "hook": {
+    "path": "/usr/local/bin/verify-signature-hook",
+    "args": ["verify-signature-hook"],
+    "env": [
+      "COSIGN_PUBKEY=/etc/containerd/keys/cosign.pub"
+    ]
+  },
+  "when": {
+    "always": true
+  },
+  "stages": ["prestart"]
+}

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: signed-alpine-crio
+  labels:
+    test: crio-verification
+spec:
+  containers:
+  - name: alpine
+    image: 127.0.0.1:5003/alpine:3.20.3
+    command: ["sh", "-c", "echo 'Running signed container' && sleep 3600"]
+  restartPolicy: Never

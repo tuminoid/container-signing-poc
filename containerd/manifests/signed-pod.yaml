@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: signed-alpine-test
+  labels:
+    test: signature-verification
+spec:
+  containers:
+  - name: alpine
+    image: localhost:5000/alpine:3.20.3
+    command: ["sh", "-c", "echo 'Running signed container' && sleep 3600"]
+  restartPolicy: Never

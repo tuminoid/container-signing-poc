@@ -1,0 +1,7 @@
+# Ignore generated keys and signatures
+*.key
+*.pub
+*.pem
+*.crt
+*.sig
+*.json

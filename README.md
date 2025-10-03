@@ -10,7 +10,7 @@ or
 - Moving Cosign signatures from one registry to another with Cosign
 then
 - [Validating the signing with Kyverno admission controller](kyverno/README.md)
-- [Verify signatures at container runtime level](containerd/README.md)
+- [Verify signatures at container runtime level](./RUNTIME_VERIFICATION_SUMMARY.md) ([CRI-O](crio/README.md) and [Containerd](containerd/README.md))
 
 ```mermaid
 flowchart LR
@@ -55,9 +55,12 @@ Basically, the POC is finding the following:
 1. Kyverno can be used with Cosign the same as Notation, just a little bit more
    configuration needed in the manifest to disable transparency logs and SCTs.
 
-## Containerd
+## Runtime-Level Verification
 
-1. Containerd can be configured to verify signatures at runtime
+1. CRI-O has built-in signature verification support via policy.json
+1. Containerd can be configured to verify signatures at runtime via OCI hooks
+1. See [Runtime Verification Plan](./RUNTIME_VERIFICATION_PLAN.md) and 
+   [Quick Summary](./RUNTIME_VERIFICATION_SUMMARY.md) for detailed POC plans
 
 ## e2e test
 

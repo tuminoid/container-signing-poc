@@ -1,0 +1,39 @@
+{
+  "default": [
+    {
+      "type": "reject"
+    }
+  ],
+  "transports": {
+    "docker": {
+      "127.0.0.1:5003": [
+        {
+          "type": "sigstoreSigned",
+          "keyPath": "/etc/containers/keys/cosign.pub",
+          "signedIdentity": {
+            "type": "matchRepository"
+          }
+        }
+      ],
+      "localhost:5003": [
+        {
+          "type": "sigstoreSigned",
+          "keyPath": "/etc/containers/keys/cosign.pub",
+          "signedIdentity": {
+            "type": "matchRepository"
+          }
+        }
+      ],
+      "registry.k8s.io": [
+        {
+          "type": "insecureAcceptAnything"
+        }
+      ],
+      "docker.io": [
+        {
+          "type": "reject"
+        }
+      ]
+    }
+  }
+}

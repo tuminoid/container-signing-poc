@@ -1,0 +1,5 @@
+docker:
+  127.0.0.1:5003:
+    sigstore: http://127.0.0.1:5003
+  localhost:5003:
+    sigstore: http://localhost:5003
