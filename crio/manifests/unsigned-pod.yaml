@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsigned-alpine-crio
+  labels:
+    test: crio-verification
+spec:
+  containers:
+  - name: alpine
+    image: 127.0.0.1:5003/alpine:unsigned
+    command: ["sh", "-c", "echo 'This should fail!' && sleep 3600"]
+  restartPolicy: Never

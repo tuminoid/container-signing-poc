@@ -1,0 +1,5 @@
+docker:
+  127.0.0.1:5003:
+    use-sigstore-attachments: true
+  localhost:5003:
+    use-sigstore-attachments: true

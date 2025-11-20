@@ -1,0 +1,34 @@
+{
+  "default": [
+    {
+      "type": "insecureAcceptAnything"
+    }
+  ],
+  "transports": {
+    "docker": {
+      "127.0.0.1:5003": [
+        {
+          "type": "sigstoreSigned",
+          "pki": {
+            "caRootsPath": "/etc/containers/certs/ca-roots.pem",
+            "caIntermediatesPath": "/etc/containers/certs/ca-intermediates.pem",
+            "subjectEmail": "ci-build@example.com"
+          },
+          "signedIdentity": {
+            "type": "matchRepository"
+          }
+        }
+      ],
+      "127.0.0.1:5002": [
+        {
+          "type": "insecureAcceptAnything"
+        }
+      ],
+      "gcr.io": [
+        {
+          "type": "reject"
+        }
+      ]
+    }
+  }
+}
