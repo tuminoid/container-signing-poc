@@ -1,14 +1,13 @@
 # Container Signing POC
-<!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor -->
+<!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor,containerd -->
 
-This experiment is three-fold:
+This experiment has multiple parts and levels:
 
 - [Signing images with Notation, especially with custom signers](notation/README.md)
 - [Moving signatures from one registry to another with Oras](oras/README.md)
 or
 - [Signing with Cosign](cosign/README.md)
 - Moving Cosign signatures from one registry to another with Cosign
-then
 - [Validating the signing with Kyverno admission controller](kyverno/README.md)
 
 ```mermaid
@@ -24,6 +23,12 @@ flowchart LR
    cosign_signing-->cosign_relocation
    cosign_relocation-->kyverno
 ```
+
+In addition to the above flow, we might as well check the signatures on the
+container runtime level:
+
+- [CRI-O](crio/README.md)
+- [Containerd](containerd/README.md)
 
 ## TL;DR of the POC
 
@@ -48,11 +53,17 @@ Basically, the POC is finding the following:
    achieve external signing.
 1. Cosign can also save and load images with signatures by itself, Oras is not
    needed
-1. Cosign ecosystem can only handle RSA256 with PKCS#1. Anything other than
-   those lack support as Sigstore wants support to be homogenous across all of
-   its services, so implementing it is not trivial.
+1. Cosign ecosystem can only handle SHA-256 hashing with RSA PKCS#1 v1.5.
+   Anything other than those (e.g., SHA-512, PSS padding) lack support as
+   Sigstore wants support to be homogenous across all of its services, so
+   implementing it is not trivial.
 1. Kyverno can be used with Cosign the same as Notation, just a little bit more
    configuration needed in the manifest to disable transparency logs and SCTs.
+
+## Runtime-Level Verification
+
+1. CRI-O has built-in signature verification support via policy.json
+1. Containerd 2.1+ can verify signatures at runtime via Transfer Service API
 
 ## e2e test
 
