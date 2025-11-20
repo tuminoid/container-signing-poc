@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-gcr-blocked
+  namespace: default
+spec:
+  containers:
+  - name: nginx
+    image: gcr.io/google-containers/pause:3.2
+    command: ["sleep", "3600"]
+  restartPolicy: Never
