@@ -18,8 +18,6 @@ This means:
 **For production:** Use admission controllers (Kyverno, Ratify) as primary
 control. Transfer Service is defense-in-depth only.
 
-See [CRI_LIMITATION.md](./CRI_LIMITATION.md) for details.
-
 ## Requirements
 
 - **containerd 2.1+** ([Transfer Service
