@@ -1,0 +1,149 @@
+#!/bin/bash
+# Transfer Service Image Verifier Plugin for containerd
+# This plugin is called by containerd's transfer service during image pull
+# to verify image signatures before allowing the image to be used.
+#
+# CONFIGURATION: /etc/containerd/image-verifier.conf
+#
+# Format (one policy per line):
+#   REGISTRY_POLICY_NAME=registry_pattern|ca_cert_path
+#
+# Example:
+#   REGISTRY_POLICY_INTERNAL=registry.internal.corp:5000|/etc/containerd/certs/internal-ca.crt
+#   REGISTRY_POLICY_PROD=registry-prod.example.com|/etc/containerd/certs/prod-ca.crt
+#   REGISTRY_POLICY_LOCAL=127\.0\.0\.1:5000|/etc/containerd/certs/ca.crt
+#   VERIFY_DEFAULT_ACTION=allow
+#
+# Default behavior (no matching policy): VERIFY_DEFAULT_ACTION
+#   VERIFY_DEFAULT_ACTION=allow  - Allow images from unknown registries
+#   VERIFY_DEFAULT_ACTION=deny   - Deny images from unknown registries
+
+set -euo pipefail
+
+# Load configuration from file
+CONFIG_FILE="/etc/containerd/image-verifier.conf"
+if [[ -f "${CONFIG_FILE}" ]]; then
+    # Load env vars from config file using a safer method
+    # Read line by line and export, avoiding bash interpretation of special chars
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$line" ]] && continue
+        # Export the variable
+        export "$line"
+    done < "${CONFIG_FILE}"
+fi
+
+# Parse command line arguments
+IMAGE_NAME=""
+IMAGE_DIGEST=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -name)
+            IMAGE_NAME="$2"
+            shift 2
+            ;;
+        -digest)
+            IMAGE_DIGEST="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+# Logging helper
+log() {
+    echo "$@" | logger -t containerd-verifier -p user.info
+    echo "$@" >&2
+}
+
+# Verify we have required parameters
+if [[ -z "${IMAGE_NAME}" ]] || [[ -z "${IMAGE_DIGEST}" ]]; then
+    log "ERROR: Missing required parameters (-name or -digest)"
+    log "  IMAGE_NAME='${IMAGE_NAME}'"
+    log "  IMAGE_DIGEST='${IMAGE_DIGEST}'"
+    exit 1
+fi
+
+log "===> VERIFIER CALLED: ${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+# Construct full image reference
+IMAGE_REF="${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+# Default action for unknown registries (can be overridden via env var)
+DEFAULT_ACTION="${VERIFY_DEFAULT_ACTION:-allow}"
+
+# Find matching registry policy
+MATCHED_POLICY=""
+CA_CERT_PATH=""
+
+# Iterate through all environment variables starting with REGISTRY_POLICY_
+for var in $(compgen -e | grep '^REGISTRY_POLICY_' || true); do
+    policy_value="${!var}"
+    
+    # Parse policy: "registry_pattern|ca_cert_path" or "registry_pattern|ALLOW" or "registry_pattern|BLOCK"
+    IFS='|' read -r registry_pattern ca_path <<< "$policy_value"
+    
+    # Check if image name matches this registry pattern
+    if [[ "${IMAGE_NAME}" =~ ^${registry_pattern} ]]; then
+        log "Matched policy: ${var} (pattern: ${registry_pattern})"
+        MATCHED_POLICY="${var}"
+        CA_CERT_PATH="${ca_path}"
+        break
+    fi
+done
+
+# If no policy matched, use default action
+if [[ -z "${MATCHED_POLICY}" ]]; then
+    log "No registry policy matched for ${IMAGE_NAME}"
+    
+    if [[ "${DEFAULT_ACTION}" == "deny" ]]; then
+        log "✗ DEFAULT ACTION: DENY - Rejecting image from unknown registry"
+        echo "Image rejected: no registry policy configured for ${IMAGE_NAME}"
+        exit 1
+    else
+        log "✓ DEFAULT ACTION: ALLOW - Allowing image from unknown registry"
+        exit 0
+    fi
+fi
+
+# Handle special policy keywords: ALLOW and BLOCK
+if [[ "${CA_CERT_PATH}" == "ALLOW" ]]; then
+    log "✓ POLICY ACTION: ALLOW - No verification required for ${IMAGE_NAME}"
+    exit 0
+elif [[ "${CA_CERT_PATH}" == "BLOCK" ]]; then
+    log "✗ POLICY ACTION: BLOCK - Registry blocked by policy: ${IMAGE_NAME}"
+    echo "Image rejected: registry is blocked by policy"
+    exit 1
+fi
+
+# Verify CA certificate exists
+if [[ ! -f "${CA_CERT_PATH}" ]]; then
+    log "ERROR: CA certificate not found: ${CA_CERT_PATH}"
+    log "Policy: ${MATCHED_POLICY}"
+    echo "Internal error: CA certificate missing"
+    exit 1
+fi
+
+log "Verifying signature with CA: ${CA_CERT_PATH}"
+
+# Verify with cosign using the registry-specific CA certificate
+if cosign verify \
+    --cert-chain="${CA_CERT_PATH}" \
+    --certificate-identity-regexp '.*' \
+    --certificate-oidc-issuer-regexp '.*' \
+    --insecure-ignore-tlog=true \
+    --private-infrastructure \
+    --insecure-ignore-sct=true \
+    "${IMAGE_REF}" > /dev/null 2>&1; then
+    
+    log "✓ Signature verification PASSED for ${IMAGE_REF}"
+    exit 0
+else
+    log "✗ Signature verification FAILED for ${IMAGE_REF}"
+    echo "Image signature verification failed for ${IMAGE_NAME}"
+    exit 1
+fi

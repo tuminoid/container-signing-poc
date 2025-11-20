@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "hooks": {
+    "prestart": [
+      {
+        "path": "/usr/local/bin/verify-signature-hook"
+      }
+    ]
+  }
+}
