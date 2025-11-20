@@ -1,0 +1,15 @@
+# Ignore generated keys, certificates, and signatures
+*.key
+*.pub
+*.pem
+*.crt
+*.sig
+*.json
+*.csr
+*.conf
+*.srl
+
+# Ignore OpenSSL database files
+index*
+serial*
+subca-serial*
