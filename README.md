@@ -1,34 +1,99 @@
 # Container Signing POC
 <!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor,containerd -->
 
-This experiment has multiple parts and levels:
+This experiment has multiple parts and options:
 
-- [Signing images with Notation, especially with custom signers](notation/README.md)
-- [Moving signatures from one registry to another with Oras](oras/README.md)
-or
-- [Signing with Cosign](cosign/README.md)
-- Moving Cosign signatures from one registry to another with Cosign
-- [Validating the signing with Kyverno admission controller](kyverno/README.md)
+1. Image signing:
+
+   - [Signing images with Notation, especially with custom signers](notation/README.md)
+   or
+   - [Signing with Cosign](cosign/README.md)
+
+1. Signature relocation:
+
+   - [Moving signatures from one registry to another with Oras](oras/README.md)
+   or
+   - Moving Cosign signatures from one registry to another with Cosign
+
+1. Admission controller verification:
+
+   - [Validating the signing with Kyverno admission controller](kyverno/README.md)
+
+1. Container runtime verification:
+
+   - [CRI-O](crio/README.md)
+   or
+   - [Containerd](containerd/README.md)
+
+## Flow with Kyverno admission controller
 
 ```mermaid
 flowchart LR
    notation(Container signing with Notation)
    oras(Signature relocation with Oras)
-   kyverno(Signature validation with Kyverno)
    cosign_signing(Container signing with Cosign)
    cosign_relocation(Signature relocation with Cosign)
+   registry(Registry with signatures)
+   kyverno(Kyverno validates via registry)
 
    notation-->oras
-   oras-->kyverno
+   oras-->registry
    cosign_signing-->cosign_relocation
-   cosign_relocation-->kyverno
+   cosign_relocation-->registry
+   registry-->kyverno
 ```
 
-In addition to the above flow, we might as well check the signatures on the
-container runtime level:
+## Flow with Kyverno and container runtime verification both
 
-- [CRI-O](crio/README.md)
-- [Containerd](containerd/README.md)
+```mermaid
+flowchart LR
+   notation(Container signing with Notation)
+   oras(Signature relocation with Oras)
+   cosign_signing(Container signing with Cosign)
+   cosign_relocation(Signature relocation with Cosign)
+   registry(Registry with signatures)
+   kyverno(Kyverno validates via registry)
+   pod(Pod Creation)
+   pull(Image Pull)
+   crio(CRI-O runtime verification)
+   containerd(Containerd runtime verification)
+
+   notation-->oras
+   oras-->registry
+   cosign_signing-->cosign_relocation
+   cosign_relocation-->registry
+   registry-->kyverno
+   kyverno-->pod
+   pod-->pull
+   pull-->crio
+   pull-->containerd
+```
+
+## Flow with container runtime verification
+
+```mermaid
+flowchart LR
+   notation(Container signing with Notation)
+   oras(Signature relocation with Oras)
+   cosign_signing(Container signing with Cosign)
+   cosign_relocation(Signature relocation with Cosign)
+   registry(Registry with signatures)
+   pod(Pod Creation)
+   pull(Image Pull from registry)
+   verify(Runtime verifies signatures)
+   crio(CRI-O runtime verification)
+   containerd(Containerd runtime verification)
+
+   notation-->oras
+   oras-->registry
+   cosign_signing-->cosign_relocation
+   cosign_relocation-->registry
+   pod-->pull
+   registry-->pull
+   pull-->verify
+   verify-->crio
+   verify-->containerd
+```
 
 ## TL;DR of the POC
 
@@ -62,8 +127,12 @@ Basically, the POC is finding the following:
 
 ## Runtime-Level Verification
 
-1. CRI-O has built-in signature verification support via policy.json
+1. CRI-O 1.34+ has built-in signature verification support via policy.json
 1. Containerd 2.1+ can verify signatures at runtime via Transfer Service API
+
+Both could also verify signatures using OCI hooks, with cost of performance hit
+on each container creation. This would allow malicious, unsigned images hit the
+local disk, which is not ideal either.
 
 ## e2e test
 
@@ -79,6 +148,13 @@ Note: Due to issues with Kind cluster setup, pods do not end up running, but
 will show `ImagePullErr`. This is OK. As long as only pods with `success` in
 their name are created, POC is success. If no pods are created, or pods with
 `fail` in their name are created, then it is a failure.
+
+### CRI-O and containerd e2e tests
+
+These scenarios should be run in standalone test VMs as they will install
+and configure container runtimes and not care if there is existing configurations.
+For these, in respective directories, run `make setup` to install and configure
+the runtime, then `make run` to run the e2e tests.
 
 ## Notes
 
@@ -123,3 +199,16 @@ but also Rekor and Fulcio for certificate management and transparency log server
 as well as support for many languages, like Go, Python, Ruby, Java etc. This is
 a strength and a weakness the same time, as mentioned before related to SHA256
 hardcoding problem.
+
+### Notes on CRI-O
+
+CRI-O requires version 1.34+ for built-in signature verification support via
+policy.json. The support comes from the underlying containers/image library, which
+has had signature verification support since February 2025.
+
+### Notes on Containerd
+
+Containerd's Transfer Service API based image verification is a new feature
+added in version 2.1+. It allows pluggable verifiers to be used during
+image pulls, to verify signatures or do other checks before allowing the image
+to be used.
