@@ -64,18 +64,18 @@ if kubectl apply -f manifests/signed-pod.yaml 2>&1 | tee /tmp/containerd-test-si
 
     if [[ "${POD_STATUS}" == "Running" ]]; then
         echo ""
-        echo "✅ OK: Signed image pod RUNNING"
+        echo "[OK] OK: Signed image pod RUNNING"
         echo "   Certificate chain validation passed"
         sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -3 || true
     else
         echo ""
-        echo "❌ ERROR: Pod status: ${POD_STATUS}"
+        echo "[ERROR] ERROR: Pod status: ${POD_STATUS}"
         kubectl describe pod test-signed | tail -30
     fi
     kubectl delete pod test-signed --wait=false >/dev/null 2>&1 || true
 else
     echo ""
-    echo "❌ ERROR: Signed image pod CREATE FAILED"
+    echo "[ERROR] ERROR: Signed image pod CREATE FAILED"
 fi
 echo ""
 
@@ -104,22 +104,22 @@ if kubectl apply -f manifests/unsigned-pod.yaml 2>&1 | tee /tmp/containerd-test-
 
         if [[ "${REASON}" == "ImagePullBackOff" ]] || [[ "${REASON}" == "ErrImagePull" ]]; then
             echo ""
-            echo "✅ OK: Unsigned image pod BLOCKED by Transfer Service verifier"
+            echo "[OK] OK: Unsigned image pod BLOCKED by Transfer Service verifier"
             echo "   Reason: ${REASON}"
             sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -3 || true
         else
             echo ""
-            echo "⚠️  Pod waiting but not due to verifier: ${REASON}    "
+            echo "[WARN]  Pod waiting but not due to verifier: ${REASON}    "
             kubectl describe pod test-unsigned | tail -20
         fi
     elif [[ "${POD_STATUS}" == "Running" ]]; then
         echo ""
-        echo "❌ ERROR: Unsigned image pod RUNNING"
+        echo "[ERROR] ERROR: Unsigned image pod RUNNING"
         echo "   Verifier did NOT block this!"
         sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -5 || true
     else
         echo ""
-        echo "⚠️  Pod status: ${POD_STATUS}"
+        echo "[WARN]  Pod status: ${POD_STATUS}"
         kubectl describe pod test-unsigned | tail -20
     fi
     kubectl delete pod test-unsigned --wait=false >/dev/null 2>&1 || true
@@ -152,22 +152,22 @@ if kubectl apply -f manifests/gcr-blocked-pod.yaml 2>&1 | tee /tmp/containerd-te
 
         if [[ "${REASON}" == "ImagePullBackOff" ]] || [[ "${REASON}" == "ErrImagePull" ]]; then
             echo ""
-            echo "✅ OK: gcr.io image BLOCKED by policy"
+            echo "[OK] OK: gcr.io image BLOCKED by policy"
             echo "   Reason: ${REASON}"
             sudo journalctl -t containerd-verifier --since '30 sec ago' | grep -A2 "gcr.io" | tail -3 || true
         else
             echo ""
-            echo "⚠️  Pod waiting but not due to policy: ${REASON}"
+            echo "[WARN]  Pod waiting but not due to policy: ${REASON}"
             kubectl describe pod test-gcr-blocked | tail -20
         fi
     elif [[ "${POD_STATUS}" == "Running" ]]; then
         echo ""
-        echo "❌ ERROR: gcr.io image pod RUNNING"
+        echo "[ERROR] ERROR: gcr.io image pod RUNNING"
         echo "   Policy did NOT block this!"
         sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -5 || true
     else
         echo ""
-        echo "⚠️  Pod status: ${POD_STATUS}"
+        echo "[WARN]  Pod status: ${POD_STATUS}"
         kubectl describe pod test-gcr-blocked | tail -20
     fi
     kubectl delete pod test-gcr-blocked --wait=false >/dev/null 2>&1 || true
@@ -188,18 +188,18 @@ if kubectl apply -f manifests/secondary-registry-pod.yaml 2>&1 | tee /tmp/contai
 
     if [[ "${POD_STATUS}" == "Running" ]]; then
         echo ""
-        echo "✅ OK: Secondary registry pod RUNNING"
+        echo "[OK] OK: Secondary registry pod RUNNING"
         echo "   No verification required (per policy)"
         sudo journalctl -t containerd-verifier --since '30 sec ago' | grep "test-secondary-registry" | tail -2 || true
     else
         echo ""
-        echo "⚠️  Pod status: ${POD_STATUS}"
+        echo "[WARN]  Pod status: ${POD_STATUS}"
         kubectl describe pod test-secondary-registry | tail -20
     fi
     kubectl delete pod test-secondary-registry --wait=false >/dev/null 2>&1 || true
 else
     echo ""
-    echo "❌ ERROR: Secondary registry pod CREATE FAILED"
+    echo "[ERROR] ERROR: Secondary registry pod CREATE FAILED"
 fi
 echo ""
 

@@ -84,10 +84,10 @@ push-unsigned-test: setup-registry
 sign-image: setup-registry gen-certs push-unsigned-test
 	@# Check if already signed
 	@if cosign verify \
-		--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
+		--ca-roots $(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*ci-build@example.com' \
 		--certificate-oidc-issuer-regexp '.*' \
-		--insecure-ignore-tlog \
+		--private-infrastructure \
 		--insecure-ignore-sct \
 		--allow-insecure-registry \
 		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE) >/dev/null 2>&1; then \
@@ -128,15 +128,15 @@ install-policy:
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
 	@cosign verify \
-		--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
+		--ca-roots $(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*ci-build@example.com' \
 		--certificate-oidc-issuer-regexp '.*' \
-		--insecure-ignore-tlog \
+		--private-infrastructure \
 		--insecure-ignore-sct \
 		--allow-insecure-registry \
 		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE)
 	@echo ""
-	@echo "✅ Signature verification successful!"
+	@echo "[OK] Signature verification successful!"
 
 run: check-vm
 	@if ! kubectl get nodes &> /dev/null 2>&1; then \

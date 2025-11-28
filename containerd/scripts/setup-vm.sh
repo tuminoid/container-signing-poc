@@ -32,7 +32,8 @@ echo "   OK: Dependencies installed"
 echo ""
 
 echo "==> Installing cosign..."
-COSIGN_VERSION="v2.4.1"
+# Cosign v3 - uses new bundle format by default
+COSIGN_VERSION="v3.0.2"
 wget -q "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
 mv cosign-linux-amd64 /usr/local/bin/cosign
 chmod +x /usr/local/bin/cosign

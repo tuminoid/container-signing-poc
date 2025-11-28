@@ -136,7 +136,7 @@ verify:
 		--allow-insecure-registry \
 		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE)
 	@echo ""
-	@echo "✅ Signature verification successful!"
+	@echo "[OK] Signature verification successful!"
 
 run: check-vm
 	@if [[ ! -f "$(EXAMPLES_DIR)/leaf.key" ]]; then \

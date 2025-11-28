@@ -101,21 +101,21 @@ if [[ -z "${MATCHED_POLICY}" ]]; then
     log "No registry policy matched for ${IMAGE_NAME}"
     
     if [[ "${DEFAULT_ACTION}" == "deny" ]]; then
-        log "✗ DEFAULT ACTION: DENY - Rejecting image from unknown registry"
+        log "[FAIL] DEFAULT ACTION: DENY - Rejecting image from unknown registry"
         echo "Image rejected: no registry policy configured for ${IMAGE_NAME}"
         exit 1
     else
-        log "✓ DEFAULT ACTION: ALLOW - Allowing image from unknown registry"
+        log "[OK] DEFAULT ACTION: ALLOW - Allowing image from unknown registry"
         exit 0
     fi
 fi
 
 # Handle special policy keywords: ALLOW and BLOCK
 if [[ "${CA_CERT_PATH}" == "ALLOW" ]]; then
-    log "✓ POLICY ACTION: ALLOW - No verification required for ${IMAGE_NAME}"
+    log "[OK] POLICY ACTION: ALLOW - No verification required for ${IMAGE_NAME}"
     exit 0
 elif [[ "${CA_CERT_PATH}" == "BLOCK" ]]; then
-    log "✗ POLICY ACTION: BLOCK - Registry blocked by policy: ${IMAGE_NAME}"
+    log "[FAIL] POLICY ACTION: BLOCK - Registry blocked by policy: ${IMAGE_NAME}"
     echo "Image rejected: registry is blocked by policy"
     exit 1
 fi
@@ -131,19 +131,20 @@ fi
 log "Verifying signature with CA: ${CA_CERT_PATH}"
 
 # Verify with cosign using the registry-specific CA certificate
+# --ca-roots: Root CA certificate for verifying the signing certificate chain
+# --private-infrastructure: Skip transparency log and SCT verification (BYO-PKI)
 if cosign verify \
-    --cert-chain="${CA_CERT_PATH}" \
+    --ca-roots="${CA_CERT_PATH}" \
     --certificate-identity-regexp '.*' \
     --certificate-oidc-issuer-regexp '.*' \
-    --insecure-ignore-tlog=true \
     --private-infrastructure \
     --insecure-ignore-sct=true \
     "${IMAGE_REF}" > /dev/null 2>&1; then
     
-    log "✓ Signature verification PASSED for ${IMAGE_REF}"
+    log "[OK] Signature verification PASSED for ${IMAGE_REF}"
     exit 0
 else
-    log "✗ Signature verification FAILED for ${IMAGE_REF}"
+    log "[FAIL] Signature verification FAILED for ${IMAGE_REF}"
     echo "Image signature verification failed for ${IMAGE_NAME}"
     exit 1
 fi

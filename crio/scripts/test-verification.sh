@@ -60,11 +60,11 @@ echo "   Verification: BYO-PKI certificate chain with email ci-build@example.com
 echo ""
 if sudo crictl pull 127.0.0.1:5003/alpine:3.20.3 2>&1 | tee /tmp/crio-test-signed.log; then
     echo ""
-    echo "✅ OK: Signed image pull SUCCEEDED"
+    echo "[OK] OK: Signed image pull SUCCEEDED"
     echo "   Certificate chain validation passed"
 else
     echo ""
-    echo "❌ ERROR: Signed image pull FAILED"
+    echo "[ERROR] ERROR: Signed image pull FAILED"
     echo "   Make sure you ran: make run (it sets up automatically)"
     echo ""
     echo "   Check CRI-O logs: sudo journalctl -u crio -n 50"
@@ -78,11 +78,11 @@ echo "   Image: 127.0.0.1:5003/alpine:unsigned"
 echo ""
 if sudo crictl pull 127.0.0.1:5003/alpine:unsigned 2>&1 | tee /tmp/crio-test-unsigned.log; then
     echo ""
-    echo "❌ ERROR: Unsigned image pull SUCCEEDED (should have failed!)"
+    echo "[ERROR] ERROR: Unsigned image pull SUCCEEDED (should have failed!)"
     echo "   Check policy.json configuration"
 else
     echo ""
-    echo "✅ OK: Unsigned image pull FAILED as expected"
+    echo "[OK] OK: Unsigned image pull FAILED as expected"
     echo "   Policy enforcement working correctly"
 fi
 echo ""
@@ -136,18 +136,18 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
 
         if [[ "${POD_STATUS}" == "Running" ]]; then
             echo ""
-            echo "✅ OK: Signed image pod RUNNING"
+            echo "[OK] OK: Signed image pod RUNNING"
             echo "   Certificate chain validation passed in Kubernetes"
             kubectl get pod signed-alpine-crio
         else
             echo ""
-            echo "❌ ERROR: Pod status: ${POD_STATUS}"
+            echo "[ERROR] ERROR: Pod status: ${POD_STATUS}"
             kubectl describe pod signed-alpine-crio | tail -20
         fi
         kubectl delete pod signed-alpine-crio --wait=false >/dev/null 2>&1 || true
     else
         echo ""
-        echo "❌ ERROR: Signed pod CREATE FAILED"
+        echo "[ERROR] ERROR: Signed pod CREATE FAILED"
     fi
     echo ""
 
@@ -180,26 +180,26 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
 
             if [[ "${REASON}" == "ImagePullBackOff" ]] || [[ "${REASON}" == "ErrImagePull" ]]; then
                 echo ""
-                echo "✅ OK: Unsigned image pod BLOCKED by CRI-O policy"
+                echo "[OK] OK: Unsigned image pod BLOCKED by CRI-O policy"
                 echo "   Reason: ${REASON}"
                 kubectl describe pod unsigned-alpine-crio | grep -A5 "Events:" | tail -3 || true
             else
                 echo ""
-                echo "❌ WARNING: Pod blocked but reason unclear: ${REASON}"
+                echo "[ERROR] WARNING: Pod blocked but reason unclear: ${REASON}"
             fi
         elif [[ "${POD_STATUS}" == "Running" ]]; then
             echo ""
-            echo "❌ ERROR: Unsigned pod is RUNNING (should have failed!)"
+            echo "[ERROR] ERROR: Unsigned pod is RUNNING (should have failed!)"
             kubectl get pod unsigned-alpine-crio
         else
             echo ""
-            echo "⚠️  Pod status: ${POD_STATUS}"
+            echo "[WARN]  Pod status: ${POD_STATUS}"
             kubectl describe pod unsigned-alpine-crio | tail -10
         fi
         kubectl delete pod unsigned-alpine-crio --wait=false >/dev/null 2>&1 || true
     else
         echo ""
-        echo "❌ ERROR: Unsigned pod CREATE FAILED"
+        echo "[ERROR] ERROR: Unsigned pod CREATE FAILED"
     fi
     echo ""
 else

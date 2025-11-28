@@ -188,11 +188,13 @@ created.
 
 **Containerd Approach** (`containerd/`):
 
-- Uses OCI Runtime Hooks (no native support)
-- Hook script (`hooks/verify-signature.sh`) intercepts container creation
-- Calls `cosign verify` before allowing container to start
-- Hook configuration in `hooks/oci-hooks.json`
-- Requires VM with containerd runtime (cannot run on local machine)
+- Uses **Transfer Service image verifier plugin** (containerd 2.1+)
+- This is the official/recommended approach since PR #8515 (Apr 2025)
+- Verifier binary in `/opt/containerd/image-verifier/bin/`
+- Config: `io.containerd.image-verifier.v1.bindir` plugin
+- Calls `cosign verify` with BYO-PKI certificates
+- **Limitation**: Only verifies on registry pulls (cached images bypass)
+- Requires VM with containerd 2.1+ runtime
 
 Both approaches provide runtime-level defense even if admission controller is
 bypassed.
@@ -308,8 +310,8 @@ or rejected (admission failed).
 │   ├── scripts/           # VM setup and testing
 │   └── manifests/         # Test pod definitions
 └── containerd/            # Containerd runtime verification POC
-    ├── hooks/             # OCI hook scripts
-    ├── scripts/           # VM setup and testing
+    ├── scripts/           # VM setup, verifier plugin, testing
+    ├── config/            # (empty - config generated at runtime)
     └── manifests/         # Test pod definitions
 ```
 

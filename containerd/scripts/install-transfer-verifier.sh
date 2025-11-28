@@ -77,7 +77,7 @@ if ! systemctl is-active --quiet containerd; then
 fi
 
 echo ""
-echo "✓ Transfer Service Image Verifier installed successfully"
+echo "[OK] Transfer Service Image Verifier installed successfully"
 echo ""
 echo "Installed components:"
 echo "  - Verifier binary: ${VERIFIER_BIN_DIR}/verifier"
