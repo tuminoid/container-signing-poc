@@ -58,6 +58,37 @@ make run      # Auto-initializes k8s, signs images, runs tests
 
 ### Verification Flow
 
+```mermaid
+flowchart TD
+    A[Container Pull Request] --> B{Check policy.json<br/>for registry}
+    B -->|No match| C[Use default policy]
+    B -->|Match found| D{Policy type?}
+
+    C --> E[Allow pull]
+
+    D -->|insecureAcceptAnything| E
+    D -->|reject| F[Block pull]
+    D -->|sigstoreSigned + pki| G[Verify signature]
+
+    G --> H{Signature<br/>exists?}
+    H -->|No| F
+    H -->|Yes| I{Validate cert chain<br/>Root → Intermediate → Leaf}
+
+    I -->|Invalid| F
+    I -->|Valid| J{Check subjectEmail<br/>matches identity}
+
+    J -->|No match| F
+    J -->|Match| K{Verify cryptographic<br/>signature}
+
+    K -->|Invalid| F
+    K -->|Valid| E
+
+    E --> L[Image pulled successfully]
+    F --> M[Pull rejected]
+```
+
+**Steps:**
+
 1. CRI-O checks `/etc/containers/policy.json` for registry match
 2. If `sigstoreSigned` with `pki`, validates:
    - Certificate chain: Root CA → Intermediate CA → Leaf

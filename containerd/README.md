@@ -58,6 +58,37 @@ make run      # Installs verifier, initializes k8s, signs images, tests
 
 ## How It Works
 
+```mermaid
+flowchart TD
+    A[Container Pull Request] --> B{Image in<br/>local cache?}
+    B -->|Yes| C[Use cached image]
+    B -->|No| D[Transfer Service<br/>pulls from registry]
+
+    C --> E[Container starts<br/>NO VERIFICATION]
+
+    D --> F[Invoke verifier plugin]
+    F --> G{Match registry<br/>in policy?}
+
+    G -->|No match| H{Default action?}
+    H -->|allow| I[Allow pull]
+    H -->|block| J[Block pull]
+
+    G -->|Match found| K{Policy action?}
+    K -->|ALLOW| I
+    K -->|BLOCK| J
+    K -->|CA cert path| L[Verify with cosign]
+
+    L --> M{Signature valid?<br/>Cert chain valid?}
+    M -->|No| J
+    M -->|Yes| I
+
+    I --> N[Image pulled & cached]
+    N --> O[Container starts]
+    J --> P[Pull rejected<br/>ImagePullBackOff]
+```
+
+**Note:** Cached images bypass verification entirely - this is a known limitation.
+
 Containerd config (`/etc/containerd/config.toml`):
 
 ```toml
