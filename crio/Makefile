@@ -13,9 +13,11 @@ help:
 	@echo "CRI-O BYO-PKI Signature Verification"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make setup    # Install CRI-O 1.34+, k8s, docker, cosign (requires reboot)"
-	@echo "  make run      # Auto-init k8s, sign images, run tests"
-	@echo "  make clean    # Reset everything"
+	@echo "  make setup       # Install CRI-O 1.34+, k8s, docker, cosign (requires reboot)"
+	@echo "  make run         # Auto-init k8s, sign images (v2 & v3), run tests"
+	@echo "  make test-v2     # Test v2 attached signatures"
+	@echo "  make test-v3     # Test v3 native signatures"
+	@echo "  make clean       # Reset everything"
 	@echo ""
 	@echo "Requires: CRI-O 1.34+ (containers/image v5.34.1+ for pki field)"
 	@echo "See: https://github.com/containers/image/pull/2557"
@@ -81,9 +83,14 @@ push-unsigned-test: setup-registry
 	@docker push $(TEST_REGISTRY_SECONDARY)/nginx:alpine >/dev/null 2>&1
 	@echo "OK: Test image pushed to secondary registry"
 
-sign-image: setup-registry gen-certs push-unsigned-test
-	@# Check if already signed
+sign-image: sign-image-v2 sign-image-v3
+	@echo "Both v2 and v3 images signed"
+
+sign-image-v2: setup-registry gen-certs push-unsigned-test
+	@# Sign with v2 (attach signature)
+	@echo "==> Signing $(TEST_IMAGE) with cosign v2 (attach signature)..."
 	@if cosign verify \
+		--new-bundle-format=false \
 		--ca-roots $(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*ci-build@example.com' \
 		--certificate-oidc-issuer-regexp '.*' \
@@ -91,7 +98,7 @@ sign-image: setup-registry gen-certs push-unsigned-test
 		--insecure-ignore-sct \
 		--allow-insecure-registry \
 		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE) >/dev/null 2>&1; then \
-		echo "Image already signed"; \
+		echo "Image (v2) already signed"; \
 	else \
 		docker pull $(TEST_IMAGE) >/dev/null 2>&1; \
 		docker tag $(TEST_IMAGE) $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE) 2>/dev/null; \
@@ -118,7 +125,37 @@ sign-image: setup-registry gen-certs push-unsigned-test
 			--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
 			"$$IMAGE_REF"; \
 		\
-		echo "OK: Image signed with BYO-PKI certificate ($$IMAGE_REF)"; \
+		echo "OK: Image signed with cosign v2 (attach signature)"; \
+	fi
+
+sign-image-v3: setup-registry gen-certs
+	@# Sign with v3 (native sign)
+	@echo "==> Signing $(TEST_IMAGE_V3) with cosign v3 (native sign)..."
+	@if cosign verify \
+		--new-bundle-format=false \
+		--ca-roots $(EXAMPLES_DIR)/ca.crt \
+		--certificate-identity-regexp '.*ci-build@example.com' \
+		--certificate-oidc-issuer-regexp '.*' \
+		--private-infrastructure \
+		--insecure-ignore-sct \
+		--allow-insecure-registry \
+		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3) >/dev/null 2>&1; then \
+		echo "Image (v3) already signed"; \
+	else \
+		docker pull $(TEST_IMAGE_V3) >/dev/null 2>&1; \
+		docker tag $(TEST_IMAGE_V3) $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3) 2>/dev/null; \
+		docker push $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3) >/dev/null 2>&1; \
+		\
+		cosign sign \
+			--key $(EXAMPLES_DIR)/leaf.key \
+			--certificate $(EXAMPLES_DIR)/leaf.crt \
+			--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
+			--tlog-upload=false \
+			--allow-insecure-registry \
+			-y \
+			$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3); \
+		\
+		echo "OK: Image signed with cosign v3 (native sign)"; \
 	fi
 
 install-policy:
@@ -128,6 +165,7 @@ install-policy:
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
 	@cosign verify \
+		--new-bundle-format=false \
 		--ca-roots $(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*ci-build@example.com' \
 		--certificate-oidc-issuer-regexp '.*' \
@@ -157,6 +195,16 @@ run: check-vm
 	@./scripts/test-verification.sh
 
 test: run
+
+test-v2:
+	@echo "==> Testing v2 signature verification..."
+	@$(MAKE) sign-image-v2
+	@./scripts/test-verification.sh
+
+test-v3:
+	@echo "==> Testing v3 signature verification..."
+	@$(MAKE) sign-image-v3
+	@./scripts/test-verification.sh
 
 status:
 	@echo "Status:"

@@ -4,18 +4,21 @@ SHELL := /bin/bash
 TEST_REGISTRY_PRIMARY := 127.0.0.1:5000
 TEST_REGISTRY_SECONDARY := 127.0.0.1:5001
 TEST_IMAGE := alpine:3.20.3
+TEST_IMAGE_V3 := alpine:3.20.2
 EXAMPLES_DIR := examples
 CERT_SCRIPT := ./scripts/gencrt.sh
 
-.PHONY: help setup run test clean status check-vm gen-certs sign-image setup-registry install-hooks verify
+.PHONY: help setup run test test-v2 test-v3 clean status check-vm gen-certs sign-image sign-image-v2 sign-image-v3 setup-registry install-hooks verify
 
 help:
 	@echo "Containerd Transfer Service BYO-PKI Signature Verification"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make setup    # Install containerd 2.1+, k8s, docker, cosign (requires reboot)"
-	@echo "  make run      # Install verifier, init k8s, sign images, run tests"
-	@echo "  make clean    # Reset everything"
+	@echo "  make setup       # Install containerd 2.1+, k8s, docker, cosign (requires reboot)"
+	@echo "  make run         # Install verifier, init k8s, sign images, run tests"
+	@echo "  make test-v2     # Test v2 attached signatures"
+	@echo "  make test-v3     # Test v3 native signatures"
+	@echo "  make clean       # Reset everything"
 	@echo ""
 	@echo "Requires: containerd 2.1+ for Transfer Service API"
 	@echo "See: https://github.com/containerd/containerd/blob/main/docs/transfer.md"
@@ -67,9 +70,14 @@ gen-certs:
 		$(CERT_SCRIPT); \
 	fi
 
-sign-image: setup-registry gen-certs
-	@# Sign image for primary registry (127.0.0.1:5000)
+sign-image: sign-image-v2 sign-image-v3
+	@echo "Both v2 and v3 images signed"
+
+sign-image-v2: setup-registry gen-certs
+	@# Sign image for primary registry with v2 (attach signature)
+	@echo "==> Signing $(TEST_IMAGE) with cosign v2 (attach signature)..."
 	@if cosign verify \
+		--new-bundle-format=false \
 		--ca-roots=$(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*' \
 		--certificate-oidc-issuer-regexp '.*' \
@@ -77,7 +85,7 @@ sign-image: setup-registry gen-certs
 		--insecure-ignore-sct \
 		--allow-insecure-registry \
 		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE) >/dev/null 2>&1; then \
-		echo "Primary registry image already signed"; \
+		echo "Primary registry image (v2) already signed"; \
 	else \
 		docker pull $(TEST_IMAGE) >/dev/null 2>&1; \
 		docker tag $(TEST_IMAGE) $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE) 2>/dev/null; \
@@ -102,7 +110,37 @@ sign-image: setup-registry gen-certs
 			--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
 			"$$IMAGE_REF"; \
 		\
-		echo "OK: Primary registry image signed with BYO-PKI certificate"; \
+		echo "OK: Image signed with cosign v2 (attach signature)"; \
+	fi
+
+sign-image-v3: setup-registry gen-certs
+	@# Sign image for primary registry with v3 (native sign)
+	@echo "==> Signing $(TEST_IMAGE_V3) with cosign v3 (native sign)..."
+	@if cosign verify \
+		--new-bundle-format=false \
+		--ca-roots=$(EXAMPLES_DIR)/ca.crt \
+		--certificate-identity-regexp '.*' \
+		--certificate-oidc-issuer-regexp '.*' \
+		--private-infrastructure \
+		--insecure-ignore-sct \
+		--allow-insecure-registry \
+		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3) >/dev/null 2>&1; then \
+		echo "Primary registry image (v3) already signed"; \
+	else \
+		docker pull $(TEST_IMAGE_V3) >/dev/null 2>&1; \
+		docker tag $(TEST_IMAGE_V3) $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3) 2>/dev/null; \
+		docker push $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3) >/dev/null 2>&1; \
+		\
+		cosign sign \
+			--key $(EXAMPLES_DIR)/leaf.key \
+			--certificate $(EXAMPLES_DIR)/leaf.crt \
+			--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
+			--tlog-upload=false \
+			--allow-insecure-registry \
+			-y \
+			$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE_V3); \
+		\
+		echo "OK: Image signed with cosign v3 (native sign)"; \
 	fi
 	@# Push unsigned image to primary registry (should be blocked)
 	@echo "==> Pushing unsigned test image to primary registry..."
@@ -128,6 +166,7 @@ install-hooks:
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
 	@cosign verify \
+		--new-bundle-format=false \
 		--ca-roots=$(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*' \
 		--certificate-oidc-issuer-regexp '.*' \
@@ -156,6 +195,16 @@ run: check-vm
 	@./scripts/test-verification.sh
 
 test: run
+
+test-v2:
+	@echo "==> Testing v2 signature verification..."
+	@$(MAKE) sign-image-v2
+	@./scripts/test-verification.sh
+
+test-v3:
+	@echo "==> Testing v3 signature verification..."
+	@$(MAKE) sign-image-v3
+	@./scripts/test-verification.sh
 
 status:
 	@echo "Status:"

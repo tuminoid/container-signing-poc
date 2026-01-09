@@ -1,9 +1,9 @@
-# setup kyverno test for e2e
+# setup kyverno test for e2e (cosign v3)
 
 SCRIPTS_DIR := scripts
 POLICY_DIR := policy
 
-COSIGN_DIR := ../cosign
+COSIGN_DIR := ../cosign-v3
 COSIGN_EXAMPLES_DIR := $(COSIGN_DIR)/examples
 COSIGN_TEST_IMAGE_UNSIGNED := alpine:3.20.2
 COSIGN_TEST_IMAGE_SIGNED := alpine:3.20.3
@@ -47,12 +47,12 @@ test: test-pod test-deployment
 	@echo "Success (if only pods with success are visible - ignore the ImagePull issues)"
 
 test-pod:
-	kubectl run --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_UNSIGNED) pod-fail-cosign || true
-	kubectl run --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_SIGNED) pod-success-cosign || true
+	kubectl run --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_UNSIGNED) pod-fail-cosign-v3 || true
+	kubectl run --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_SIGNED) pod-success-cosign-v3 || true
 
 test-deployment:
-	kubectl create deployment --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_UNSIGNED) deployment-fail-cosign || true
-	kubectl create deployment --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_SIGNED) deployment-success-cosign || true
+	kubectl create deployment --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_UNSIGNED) deployment-fail-cosign-v3 || true
+	kubectl create deployment --image $(CLUSTER_REGISTRY)/$(COSIGN_TEST_IMAGE_SIGNED) deployment-success-cosign-v3 || true
 
 delete:
 	kubectl -n default delete deployment --all

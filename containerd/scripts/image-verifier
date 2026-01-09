@@ -83,10 +83,10 @@ CA_CERT_PATH=""
 # Iterate through all environment variables starting with REGISTRY_POLICY_
 for var in $(compgen -e | grep '^REGISTRY_POLICY_' || true); do
     policy_value="${!var}"
-    
+
     # Parse policy: "registry_pattern|ca_cert_path" or "registry_pattern|ALLOW" or "registry_pattern|BLOCK"
     IFS='|' read -r registry_pattern ca_path <<< "$policy_value"
-    
+
     # Check if image name matches this registry pattern
     if [[ "${IMAGE_NAME}" =~ ^${registry_pattern} ]]; then
         log "Matched policy: ${var} (pattern: ${registry_pattern})"
@@ -99,7 +99,7 @@ done
 # If no policy matched, use default action
 if [[ -z "${MATCHED_POLICY}" ]]; then
     log "No registry policy matched for ${IMAGE_NAME}"
-    
+
     if [[ "${DEFAULT_ACTION}" == "deny" ]]; then
         log "[FAIL] DEFAULT ACTION: DENY - Rejecting image from unknown registry"
         echo "Image rejected: no registry policy configured for ${IMAGE_NAME}"
@@ -131,16 +131,18 @@ fi
 log "Verifying signature with CA: ${CA_CERT_PATH}"
 
 # Verify with cosign using the registry-specific CA certificate
+# --new-bundle-format=false: Required for cosign v3 when using --ca-roots (BYO-PKI)
 # --ca-roots: Root CA certificate for verifying the signing certificate chain
 # --private-infrastructure: Skip transparency log and SCT verification (BYO-PKI)
 if cosign verify \
+    --new-bundle-format=false \
     --ca-roots="${CA_CERT_PATH}" \
     --certificate-identity-regexp '.*' \
     --certificate-oidc-issuer-regexp '.*' \
     --private-infrastructure \
     --insecure-ignore-sct=true \
     "${IMAGE_REF}" > /dev/null 2>&1; then
-    
+
     log "[OK] Signature verification PASSED for ${IMAGE_REF}"
     exit 0
 else

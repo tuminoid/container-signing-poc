@@ -15,7 +15,10 @@ SHELL := /bin/bash
 
 all: check-tools
 	@echo "targets: setup clean"
-	@echo "after 'make setup', run 'make -f cosign.mk' or 'make -f notation.mk'"
+	@echo "after 'make setup', run:"
+	@echo "  - 'make -f cosign-v2.mk' (cosign v2)"
+	@echo "  - 'make -f cosign-v3.mk' (cosign v3)"
+	@echo "  - 'make -f notation.mk' (notation)"
 
 setup: check-tools setup-registry create-cluster install-kyverno
 	@echo "kyverno setup done!"

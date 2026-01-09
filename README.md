@@ -7,7 +7,9 @@ This experiment has multiple parts and options:
 
    - [Signing images with Notation, especially with custom signers](notation/README.md)
    or
-   - [Signing with Cosign](cosign/README.md)
+   - [Signing with Cosign v2 (external signer)](cosign-v2/README.md)
+   or
+   - [Signing with Cosign v3 (native signing)](cosign-v3/README.md)
 
 1. Signature relocation:
 
@@ -31,14 +33,16 @@ This experiment has multiple parts and options:
 flowchart LR
    notation(Container signing with Notation)
    oras(Signature relocation with Oras)
-   cosign_signing(Container signing with Cosign)
+   cosign_v2_signing(Container signing with Cosign v2)
+   cosign_v3_signing(Container signing with Cosign v3)
    cosign_relocation(Signature relocation with Cosign)
    registry(Registry with signatures)
    kyverno(Kyverno validates via registry)
 
    notation-->oras
    oras-->registry
-   cosign_signing-->cosign_relocation
+   cosign_v2_signing-->cosign_relocation
+   cosign_v3_signing-->cosign_relocation
    cosign_relocation-->registry
    registry-->kyverno
 ```
@@ -49,7 +53,8 @@ flowchart LR
 flowchart LR
    notation(Container signing with Notation)
    oras(Signature relocation with Oras)
-   cosign_signing(Container signing with Cosign)
+   cosign_v2_signing(Container signing with Cosign v2)
+   cosign_v3_signing(Container signing with Cosign v3)
    cosign_relocation(Signature relocation with Cosign)
    registry(Registry with signatures)
    kyverno(Kyverno validates via registry)
@@ -60,7 +65,8 @@ flowchart LR
 
    notation-->oras
    oras-->registry
-   cosign_signing-->cosign_relocation
+   cosign_v2_signing-->cosign_relocation
+   cosign_v3_signing-->cosign_relocation
    cosign_relocation-->registry
    registry-->kyverno
    kyverno-->pod
@@ -75,7 +81,8 @@ flowchart LR
 flowchart LR
    notation(Container signing with Notation)
    oras(Signature relocation with Oras)
-   cosign_signing(Container signing with Cosign)
+   cosign_v2_signing(Container signing with Cosign v2)
+   cosign_v3_signing(Container signing with Cosign v3)
    cosign_relocation(Signature relocation with Cosign)
    registry(Registry with signatures)
    pod(Pod Creation)
@@ -86,7 +93,8 @@ flowchart LR
 
    notation-->oras
    oras-->registry
-   cosign_signing-->cosign_relocation
+   cosign_v2_signing-->cosign_relocation
+   cosign_v3_signing-->cosign_relocation
    cosign_relocation-->registry
    pod-->pull
    registry-->pull
@@ -115,7 +123,10 @@ Basically, the POC is finding the following:
 ### Cosign
 
 1. Cosign does not need plugins as it can be operated via command line to
-   achieve external signing.
+   achieve external signing (v2) or use native signing (v3).
+1. Cosign v2 uses external signer + `cosign attach signature` for legacy format
+1. Cosign v3 uses native `cosign sign --key` for new bundle format
+1. Both v2 and v3 use same CA-based certificate verification
 1. Cosign can also save and load images with signatures by itself, Oras is not
    needed
 1. Cosign ecosystem can only handle SHA-256 hashing with RSA PKCS#1 v1.5.
@@ -136,8 +147,8 @@ local disk, which is not ideal either.
 
 ## e2e test
 
-End-to-end test for this POC can be run with `make notation` or `make cosign`
-from this directory.
+End-to-end test for this POC can be run with `make notation`, `make cosign-v2`,
+or `make cosign-v3` from this directory.
 
 This will setup Kyverno in Kind cluster, install required Kyverno ClusterPolicies
 and sign images, then try run them. Only pods with proper signatures will run

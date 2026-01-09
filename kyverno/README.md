@@ -32,8 +32,9 @@ flowchart TB
 Verifying signatures with Notation "offline", please see
 [Notation External Signer documentation](../notation/README.md).
 
-Verifying signatures with Cosign "offline", please see
-[Cosign documentation](../cosign/README.md).
+Verifying signatures with Cosign "offline":
+- [Cosign v2 documentation](../cosign-v2/README.md) (external signer)
+- [Cosign v3 documentation](../cosign-v3/README.md) (native signing)
 
 ## Runtime verification
 
@@ -41,10 +42,16 @@ For runtime signature verification, we use
 [Kyverno with Notation](https://kyverno.io/docs/writing-policies/verify-images/notary/),
 or [Kyverno with Cosign](https://kyverno.io/docs/writing-policies/verify-images/sigstore/)
 
+Both Cosign v2 and v3 use the same Kyverno policy with CA-based certificate
+verification. The difference is only in the signing command and bundle format.
+
 This is part of e2e tests, suggested to run via repository top-level `Makefile`
-via `make notation` or `make cosign`.
+via `make notation`, `make cosign-v2`, or `make cosign-v3`.
 
 Kyverno's Makefile has `make setup` sets up the full setup with Kind cluster,
-local registry. `make -f cosign.mk` will run Cosign tests in this prepared
-cluster, while `make -f notation.mk` will run Notation tests.  `make clean` to
-remove everything.
+local registry. Then run one of:
+- `make -f cosign-v2.mk` (Cosign v2 tests with external signer)
+- `make -f cosign-v3.mk` (Cosign v3 tests with native signing)
+- `make -f notation.mk` (Notation tests)
+
+Use `make clean` to remove everything.

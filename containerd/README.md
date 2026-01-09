@@ -53,7 +53,10 @@ for discussion on this limitation.
 ```bash
 make setup    # Install containerd 2.1+, k8s, docker, cosign (requires reboot)
 # <reboot>
-make run      # Installs verifier, initializes k8s, signs images, tests
+make run      # Install verifier, init k8s, sign images (v2 & v3), run tests
+make test-v2  # Test only v2 signatures
+make test-v3  # Test only v3 signatures
+make clean    # Reset everything
 ```
 
 ## How It Works

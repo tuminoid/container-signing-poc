@@ -1,7 +1,7 @@
-# cosign signing test
+# cosign v3 signing test (native cosign sign command)
 
 TEST_REGISTRY := 127.0.0.1:5003
-TEST_REGISTRY_NAME := cosign-registry
+TEST_REGISTRY_NAME := cosign-v3-registry
 TEST_REGISTRY_IMAGE := registry:2
 TEST_IMAGE := alpine
 TEST_IMAGE_TAG := 3.20.3
@@ -18,10 +18,10 @@ SHELL := /bin/bash
 # (sub-ca.crt + root.crt combined)
 CERT_SCRIPT := ./gencrt.sh
 
-.PHONY: all clean registry test certificates sign verify e2e clean-e2e check-tools save load pack unpack dump-sig
+.PHONY: all clean registry test certificates sign verify e2e clean-e2e check-tools save load pack unpack dump-sig verify-v2-sigs
 
 all: check-tools
-	@echo "targets: test verify clean e2e clean-e2e"
+	@echo "targets: test verify clean e2e verify-v2-sigs"
 
 check-tools:
 	@type -a docker &>/dev/null || echo "error: Install docker: https://docs.docker.com/engine/install/"
@@ -48,6 +48,8 @@ test: check-tools registry certificates sign verify
 e2e: test save load
 
 sign:
+	@echo "==> Signing with cosign v3 (using external signer for BYO-PKI compatibility)..."
+	@echo "Note: cosign v3 binary uses new bundle format by default"
 	cosign generate "$(TEST_IMAGE_SIGN)" > $(EXAMPLES_DIR)/payload.json
 	openssl dgst -sha256 -sign $(EXAMPLES_DIR)/leaf.key \
 		-out $(EXAMPLES_DIR)/payload.sig $(EXAMPLES_DIR)/payload.json
@@ -59,10 +61,12 @@ sign:
 		--certificate $(EXAMPLES_DIR)/leaf.crt \
 		--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
 		$(TEST_IMAGE_SIGN)
+	@echo "OK: Image signed with cosign v3 (BYO-PKI external signer)"
 
 verify:
 	cosign tree $(TEST_IMAGE_SIGN)
 	cosign verify \
+		--new-bundle-format=false \
 		--ca-roots=$(EXAMPLES_DIR)/ca.crt \
 		--certificate-identity-regexp '.*' \
 		--certificate-oidc-issuer-regexp '.*' \
@@ -96,3 +100,25 @@ load: unpack
 dump-sig: save
 	DIGEST=$$(jq -r '.manifests[] | select(.annotations.kind == "dev.cosignproject.cosign/sigs") | .digest' $(EXAMPLES_DIR)/$(TEST_IMAGE)-image/index.json) && \
 	jq . $(EXAMPLES_DIR)/$(TEST_IMAGE)-image/blobs/"$${DIGEST/:/\/}"
+
+verify-v2-sigs:
+	@echo "==> Testing v3 cosign verifying v2 attached signatures..."
+	@echo "Setting up v2 environment..."
+	@make -C ../cosign-v2 clean
+	@make -C ../cosign-v2 registry certificates sign
+	@echo ""
+	@echo "==> Verifying v2 signatures with v3 cosign binary..."
+	@V2_REGISTRY=127.0.0.1:5003; \
+	V2_IMAGE=alpine:3.20.3; \
+	V2_DIGEST=$$(docker inspect --format='{{index .RepoDigests 0}}' $$V2_REGISTRY/$$V2_IMAGE | cut -d@ -f2); \
+	cosign verify \
+		--new-bundle-format=false \
+		--ca-roots=../cosign-v2/examples/ca.crt \
+		--certificate-identity-regexp '.*' \
+		--certificate-oidc-issuer-regexp '.*' \
+		--private-infrastructure \
+		--insecure-ignore-sct \
+		$$V2_REGISTRY/alpine@$$V2_DIGEST
+	@echo ""
+	@echo "[OK] v3 cosign successfully verified v2 attached signatures!"
+	@make -C ../cosign-v2 clean

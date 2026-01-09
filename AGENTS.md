@@ -8,7 +8,8 @@ code in this repository.
 This is a container image signing and verification POC that demonstrates
 multiple approaches:
 
-1. **Signing**: Using Notation (with custom external signer plugin) or Cosign
+1. **Signing**: Using Notation (with custom external signer plugin), Cosign v2
+   (external signer), or Cosign v3 (native signing)
 2. **Signature Transport**: Using Oras for moving signatures between registries
 3. **Admission-time Verification**: Using Kyverno admission controller
 4. **Runtime-level Verification**: Using CRI-O (native support) or Containerd
@@ -28,7 +29,13 @@ The POC follows defense-in-depth principle with two verification layers:
 # Run full Notation flow: sign → oras copy → kyverno verify
 make notation
 
-# Run full Cosign flow: sign → kyverno verify
+# Run Cosign v2 flow: sign → kyverno verify
+make cosign-v2
+
+# Run Cosign v3 flow: sign → kyverno verify
+make cosign-v3
+
+# Run both cosign flows
 make cosign
 
 # Clean all test artifacts
@@ -54,7 +61,7 @@ make verify
 make clean
 ```
 
-### Cosign (`cosign/`)
+### Cosign v2 (`cosign-v2/`)
 
 ```bash
 # Full test: start registry, generate certs, sign, verify
@@ -76,6 +83,26 @@ make save
 make load
 ```
 
+### Cosign v3 (`cosign-v3/`)
+
+```bash
+# Full test: start registry, generate certs, sign, verify
+make test
+
+# Sign image with v3 native signing (requires registry running)
+make sign
+
+# Verify v3 signature
+make verify
+
+# Test v3 verifying v2 signatures (backward compatibility)
+make verify-v2-sigs
+
+# Save/load operations (same as v2)
+make save
+make load
+```
+
 ### Kyverno (`kyverno/`)
 
 ```bash
@@ -85,8 +112,11 @@ make setup
 # Run Notation e2e test
 make -f notation.mk
 
-# Run Cosign e2e test
-make -f cosign.mk
+# Run Cosign v2 e2e test
+make -f cosign-v2.mk
+
+# Run Cosign v3 e2e test
+make -f cosign-v3.mk
 
 # Clean up cluster and registry
 make clean
@@ -157,12 +187,20 @@ plugin that:
 
 ### Cosign Signing
 
-Cosign signing is handled via shell scripts and OpenSSL:
+**Cosign v2**: Signing is handled via shell scripts and OpenSSL:
 
 - Generate payload with `cosign generate`
 - Sign payload with OpenSSL (RSA256 with PKCS#1)
 - Attach signature with `cosign attach signature`
 - Signatures are stored as OCI artifacts in registry
+- Can save/load entire image+signatures with `cosign save/load`
+
+**Cosign v3**: Uses native cosign signing:
+
+- Sign directly with `cosign sign --key`
+- Uses new v3 Sigstore bundle format
+- Same CA-based verification as v2
+- Can verify v2 attached signatures (backward compatible)
 - Can save/load entire image+signatures with `cosign save/load`
 
 ### Kyverno Policies
@@ -171,7 +209,7 @@ Two ClusterPolicy files in `kyverno/policy/`:
 
 1. `kyverno-policy-notation.yaml`: Verifies Notation signatures
 1. `kyverno-policy-cosign.yaml`: Verifies Cosign signatures (with transparency
-   logs disabled)
+   logs disabled) - works for both v2 and v3 as both use CA-based verification
 
 Policies are applied at admission time and prevent unsigned pods from being
 created.
@@ -300,7 +338,8 @@ or rejected (admission failed).
 ├── notation/              # Notation external signer plugin (Go)
 │   ├── cmd/notation-external-signer/  # Plugin source code
 │   └── examples/          # Example signing scripts
-├── cosign/                # Cosign signing examples (shell)
+├── cosign-v2/             # Cosign v2 signing (external signer + attach)
+├── cosign-v3/             # Cosign v3 native signing (new bundle format)
 ├── oras/                  # Oras signature copying (shell)
 ├── kyverno/               # Kyverno admission controller policies
 │   ├── policy/            # ClusterPolicy YAML files
