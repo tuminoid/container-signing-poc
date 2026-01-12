@@ -170,6 +170,27 @@ external tools like [Oras](../oras/README.md).
 - `make pack` calls `cosign save ...` and tarballs the OCI layer dump.
 - `make unpack` unpacks the tarball, and `cosign load ...` it back into registry.
 
+## Local Image Verification (Patched Cosign)
+
+Test `--local-image` verification with format auto-detection. This requires a
+patched cosign binary that fixes [sigstore/cosign#4621](https://github.com/sigstore/cosign/issues/4621),
+removing the mutual exclusivity between `--local-image` and `--new-bundle-format`.
+
+```sh
+# With system cosign (if patched)
+make e2e-local
+
+# With locally-built patched cosign
+make e2e-local COSIGN_BIN=/path/to/patched/cosign
+
+# Full test from repo root (builds and tests both v2 and v3)
+make local-image-test
+```
+
+The `verify-local` target saves the signed image to a local OCI layout and
+verifies it using `--local-image` WITHOUT specifying `--new-bundle-format`,
+testing that the patched cosign correctly auto-detects the signature format.
+
 ## Cosign signing algorithm support
 
 Sigstore/Cosign community does not what SHA512/PSS support unless it is covering
