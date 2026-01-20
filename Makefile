@@ -46,6 +46,8 @@ local-image-test:
 	$(MAKE) -C $(COSIGN_V2_DIR) e2e-local COSIGN_BIN=$(CURDIR)/$(COSIGN_PATCHED) || (rm -f $(COSIGN_PATCHED) && exit 1)
 	@echo "==> Testing cosign-v3 local image verification..."
 	$(MAKE) -C $(COSIGN_V3_DIR) e2e-local COSIGN_BIN=$(CURDIR)/$(COSIGN_PATCHED) || (rm -f $(COSIGN_PATCHED) && exit 1)
+	@echo "==> Testing cosign-v3 native signing + local image verification..."
+	$(MAKE) -C $(COSIGN_V3_DIR) test-local-image COSIGN_BIN=$(CURDIR)/$(COSIGN_PATCHED) || (rm -f $(COSIGN_PATCHED) && exit 1)
 	rm -f $(COSIGN_PATCHED)
 	@echo "[OK] All local image verification tests passed"
 

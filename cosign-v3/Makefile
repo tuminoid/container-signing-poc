@@ -21,20 +21,21 @@ COSIGN_BIN ?= cosign
 # (sub-ca.crt + root.crt combined)
 CERT_SCRIPT := ./gencrt.sh
 
-.PHONY: all clean registry test certificates sign verify e2e clean-e2e check-tools save load pack unpack dump-sig verify-v2-sigs verify-local e2e-local
+.PHONY: all clean registry test certificates sign verify e2e clean-e2e check-tools save load pack unpack dump-sig verify-v2-sigs verify-local e2e-local signing-config sign-native verify-local-native test-local-image
 
 all: check-tools
-	@echo "targets: test verify clean e2e verify-v2-sigs verify-local e2e-local"
+	@echo "targets: test verify clean e2e verify-v2-sigs verify-local e2e-local test-local-image"
 
 check-tools:
 	@type -a docker &>/dev/null || echo "error: Install docker: https://docs.docker.com/engine/install/"
 	@type -a $(COSIGN_BIN) &>/dev/null || echo "error: Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/"
 	@type -a openssl &>/dev/null || echo "error: openssl missing"
+	@type -a jq &>/dev/null || echo "error: Install jq: https://jqlang.github.io/jq/download/"
 
 clean:
 	rm -rf $(EXAMPLES_DIR)/$(TEST_IMAGE)-image
 	rm -f $(EXAMPLES_DIR)/*
-	docker rm -f $(TEST_REGISTRY_NAME) 2>/dev/null
+	docker rm -f $(TEST_REGISTRY_NAME) 2>/dev/null || true
 
 clean-e2e: clean
 
@@ -65,6 +66,24 @@ sign:
 		--certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
 		$(TEST_IMAGE_SIGN)
 	@echo "OK: Image signed with cosign v3 (BYO-PKI external signer)"
+
+signing-config:
+	@echo "==> Creating signing config without transparency log..."
+	$(COSIGN_BIN) signing-config create --out=$(EXAMPLES_DIR)/signing-config.json
+	jq 'del(.rekorTlogUrls)' $(EXAMPLES_DIR)/signing-config.json > $(EXAMPLES_DIR)/signing-config-notlog.json
+	@echo "OK: Signing config created"
+
+sign-native: signing-config
+	@echo "==> Signing with cosign v3 native signing (generates v3 bundle format)..."
+	@echo "Note: Using cosign-generated keys for native signing (not BYO-PKI)"
+	# Generate cosign key pair (non-interactive with empty password)
+	COSIGN_PASSWORD="" $(COSIGN_BIN) generate-key-pair --output-key-prefix=$(EXAMPLES_DIR)/cosign
+	# Sign with cosign-generated key (v3 bundle format)
+	COSIGN_PASSWORD="" $(COSIGN_BIN) sign \
+		--key=$(EXAMPLES_DIR)/cosign.key \
+		--signing-config=$(EXAMPLES_DIR)/signing-config-notlog.json \
+		$(TEST_IMAGE_SIGN)
+	@echo "OK: Image signed with v3 native signing (v3 bundle format)"
 
 verify:
 	$(COSIGN_BIN) tree $(TEST_IMAGE_SIGN)
@@ -118,6 +137,21 @@ verify-local: save
 
 e2e-local: check-tools registry certificates sign verify-local clean
 	@echo "[OK] Local image E2E test completed"
+
+verify-local-native: save
+	@echo "==> Verifying local OCI layout with v3 bundle format..."
+	@echo "Note: Testing patched cosign's v3 bundle + --local-image support"
+	# Verify with cosign public key (no --new-bundle-format flag = auto-detect v3)
+	$(COSIGN_BIN) verify \
+		--local-image \
+		--key=$(EXAMPLES_DIR)/cosign.pub \
+		--insecure-ignore-sct \
+		--insecure-ignore-tlog \
+		$(EXAMPLES_DIR)/$(TEST_IMAGE)-image
+	@echo "[OK] Local image verification with v3 bundle format succeeded"
+
+test-local-image: check-tools registry sign-native save verify-local-native clean
+	@echo "[OK] v3 bundle format + local image verification test completed"
 
 verify-v2-sigs:
 	@echo "==> Testing v3 cosign verifying v2 attached signatures..."
