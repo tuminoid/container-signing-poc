@@ -1,5 +1,6 @@
 # Container Signing POC
-<!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor,containerd -->
+<!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor -->
+<!-- cSpell:ignore containerd,referrers -->
 
 This experiment has multiple parts and options:
 
@@ -10,6 +11,8 @@ This experiment has multiple parts and options:
    - [Signing with Cosign v2 (external signer)](cosign-v2/README.md)
    or
    - [Signing with Cosign v3 (native signing)](cosign-v3/README.md)
+   or
+   - [Signing with Cosign v4-pre (new bundle format only)](cosign-v4-pre/README.md)
 
 1. Signature relocation:
 
@@ -136,6 +139,28 @@ Basically, the POC is finding the following:
 1. Kyverno can be used with Cosign the same as Notation, just a little bit more
    configuration needed in the manifest to disable transparency logs and SCTs.
 
+### Cosign v4-pre (new bundle format only)
+
+Anticipating cosign v4, where Sigstore bundles (v0.3+) become the only format
+and the legacy `cosign attach` path is removed:
+
+1. Signing with a private PKI works: the bundle can carry leaf + intermediate
+   while the root is supplied separately as the trust anchor. This is
+   [cosign#3976](https://github.com/sigstore/cosign/issues/3976), which is
+   fixed on the bundle codepath as of cosign 3.1.3, but still broken on the
+   legacy path.
+1. Verification requires `--allow-certificate-chain`. Without it cosign
+   silently falls back to the legacy path and reports the misleading
+   `no signatures found`.
+1. **External signing is not possible.** Native bundle signing needs a
+   cosign-encrypted key, so the private key must be handed to cosign. There is
+   no bundle equivalent of the v2 "sign externally, then attach" flow, which is
+   an open question for in-house signers.
+1. **Bundles cannot be relocated with `cosign save`/`load`**, which only writes
+   the image. `cosign copy` is deprecated and points at `oras copy -r` instead,
+   so Oras becomes necessary again for signature transport.
+1. Requires registry:3 (or another OCI 1.1 registry) for referrers support.
+
 ## Runtime-Level Verification
 
 1. CRI-O 1.34+ has built-in signature verification support via policy.json
@@ -159,6 +184,10 @@ Note: Due to issues with Kind cluster setup, pods do not end up running, but
 will show `ImagePullErr`. This is OK. As long as only pods with `success` in
 their name are created, POC is success. If no pods are created, or pods with
 `fail` in their name are created, then it is a failure.
+
+`make cosign-v4-pre` runs standalone, without Kyverno: bundle verification in
+Kyverno is unverified, and bundles have no working relocation path, so it is
+not part of the flows above.
 
 ### CRI-O and containerd e2e tests
 

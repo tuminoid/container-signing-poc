@@ -9,6 +9,7 @@ ORAS_DIR := oras
 KYVERNO_DIR := kyverno
 COSIGN_V2_DIR := cosign-v2
 COSIGN_V3_DIR := cosign-v3
+COSIGN_V4_PRE_DIR := cosign-v4-pre
 
 SHELL := /bin/bash
 
@@ -16,10 +17,10 @@ SHELL := /bin/bash
 COSIGN_SOURCE_DIR ?= $(HOME)/git/sigstore/cosign
 COSIGN_PATCHED := cosign-patched
 
-.PHONY: all notation cosign cosign-v2 cosign-v3 clean local-image-test
+.PHONY: all notation cosign cosign-v2 cosign-v3 cosign-v4-pre clean local-image-test
 
 all:
-	@echo "targets: notation cosign cosign-v2 cosign-v3 local-image-test clean"
+	@echo "targets: notation cosign cosign-v2 cosign-v3 cosign-v4-pre local-image-test clean"
 
 notation:
 	make -C $(KYVERNO_DIR) setup
@@ -35,6 +36,11 @@ cosign-v3:
 
 cosign: cosign-v2 cosign-v3
 	@echo "Both cosign v2 and v3 tests completed"
+
+# New Sigstore bundle format (v0.3) only, anticipating cosign v4.
+# Standalone: no Kyverno flow, as bundle + BYO-PKI support there is unverified.
+cosign-v4-pre:
+	make -C $(COSIGN_V4_PRE_DIR) test
 
 local-image-test:
 	@echo "==> Building patched cosign from $(COSIGN_SOURCE_DIR)..."
@@ -56,5 +62,6 @@ clean:
 	make -C $(ORAS_DIR) clean
 	make -C $(COSIGN_V2_DIR) clean
 	make -C $(COSIGN_V3_DIR) clean
+	make -C $(COSIGN_V4_PRE_DIR) clean
 	make -C $(KYVERNO_DIR) clean
 	rm -f $(COSIGN_PATCHED)

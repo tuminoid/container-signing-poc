@@ -176,17 +176,22 @@ verify-v2-sigs:
 	@make -C ../cosign-v2 clean
 
 # ---------------------------------------------------------------------------
-# Reproduction for sigstore/cosign#3976:
+# Reproduction for sigstore/cosign#3976 on the LEGACY codepath:
 # "Intermediate cert and root CA must come via same source for verify to succeed"
 #
 # Signs an image whose attached cert chain contains ONLY the intermediate
-# (sub-ca), then verifies supplying ONLY the root CA as trust anchor. cosign
-# does not combine the embedded intermediate with the supplied root, so
-# verification FAILS - reproducing the issue. Tested against cosign v3.1.1.
+# (sub-ca), then verifies supplying ONLY the root CA as trust anchor. On the
+# legacy `cosign attach signature` path this FAILS with
+# "x509: certificate signed by unknown authority", reproducing the issue.
 #
-#   make repro-3976   # runs the full reproduction (bug + positive control)
+# Scope note: `cosign attach signature` always produces a legacy
+# simple-signing artifact, so this exercises the legacy path only, regardless
+# of --new-bundle-format. The issue is FIXED on the new bundle codepath as of
+# cosign 3.1.3 - see ../cosign-v4-pre (its `make test` is the demonstration).
+#
+#   make repro-3976-legacy   # bug case + positive control
 # ---------------------------------------------------------------------------
-.PHONY: repro-3976 sign-intermediate-only verify-expect-fail verify-trusted-root-expect-fail
+.PHONY: repro-3976-legacy sign-intermediate-only verify-expect-fail verify-trusted-root-expect-fail
 
 # Overwrite the cert chain with the intermediate ONLY (drop the root), then sign.
 sign-intermediate-only:
@@ -196,8 +201,8 @@ sign-intermediate-only:
 	$(MAKE) sign
 	@echo "    signatures on image: $$($(COSIGN_BIN) download signature $(TEST_IMAGE_SIGN) 2>/dev/null | jq -s 'length')"
 
-# Verify with ROOT ONLY - the issue means this MUST fail. A pass here means the
-# bug is fixed, so we invert the exit status accordingly.
+# Verify with ROOT ONLY - on the legacy path this MUST fail. A pass here means
+# the legacy path was fixed too, so we invert the exit status accordingly.
 verify-expect-fail:
 	@echo "==> [legacy path] Verifying with ROOT ONLY (--ca-roots), expecting FAILURE..."
 	@if $(COSIGN_BIN) verify \
@@ -208,19 +213,19 @@ verify-expect-fail:
 		--private-infrastructure \
 		--insecure-ignore-sct \
 		$(TEST_IMAGE_SIGN) >/dev/null 2>&1; then \
-		echo "[FAIL] verification SUCCEEDED unexpectedly - issue #3976 appears FIXED"; exit 1; \
+		echo "[FAIL] verification SUCCEEDED unexpectedly - legacy path appears FIXED"; exit 1; \
 	else \
-		echo "[OK] verification FAILED as expected - issue #3976 reproduced (legacy path)"; \
+		echo "[OK] verification FAILED as expected - #3976 reproduced (legacy path)"; \
 	fi
 
-# Same, via the recommended --trusted-root codepath, with a trusted root that
-# contains ONLY the root CA. Expected to fail for the same reason.
+# Same, via the non-deprecated --trusted-root anchor, with a trusted root that
+# contains ONLY the root CA. Also expected to fail on the legacy path.
 verify-trusted-root-expect-fail:
-	@echo "==> [trusted-root path] Building trusted root with ROOT CA ONLY..."
+	@echo "==> [legacy path] Building trusted root with ROOT CA ONLY..."
 	$(COSIGN_BIN) trusted-root create \
 		--fulcio="url=https://private.local,certificate-chain=$(EXAMPLES_DIR)/ca.crt" \
 		--out=$(EXAMPLES_DIR)/trusted-root-rootonly.json
-	@echo "==> [trusted-root path] Verifying with ROOT ONLY, expecting FAILURE..."
+	@echo "==> [legacy path] Verifying with ROOT ONLY, expecting FAILURE..."
 	@if $(COSIGN_BIN) verify \
 		--new-bundle-format=false \
 		--trusted-root=$(EXAMPLES_DIR)/trusted-root-rootonly.json \
@@ -229,15 +234,15 @@ verify-trusted-root-expect-fail:
 		--insecure-ignore-tlog \
 		--insecure-ignore-sct \
 		$(TEST_IMAGE_SIGN) >/dev/null 2>&1; then \
-		echo "[FAIL] verification SUCCEEDED unexpectedly - issue #3976 appears FIXED"; exit 1; \
+		echo "[FAIL] verification SUCCEEDED unexpectedly - legacy path appears FIXED"; exit 1; \
 	else \
-		echo "[OK] verification FAILED as expected - issue #3976 reproduced (trusted-root path)"; \
+		echo "[OK] verification FAILED as expected - #3976 reproduced (trusted-root anchor)"; \
 	fi
 
 # Full reproduction: bug case first (intermediate-only chain -> fails), then the
 # positive control from a clean state (full chain in same source -> passes).
-repro-3976: check-tools
-	@echo "########## PHASE 1: BUG - intermediate-only chain ##########"
+repro-3976-legacy: check-tools
+	@echo "########## PHASE 1: BUG - intermediate-only attached chain ##########"
 	$(MAKE) clean registry certificates
 	$(MAKE) sign-intermediate-only
 	$(MAKE) verify-expect-fail
@@ -248,5 +253,6 @@ repro-3976: check-tools
 	$(MAKE) sign
 	$(MAKE) verify
 	@echo ""
-	@echo "[OK] Issue #3976 reproduced: intermediate-only chain fails, full chain passes"
+	@echo "[OK] #3976 reproduced on the LEGACY path: intermediate-only chain fails,"
+	@echo "     full chain passes. The new bundle path is fixed - see ../cosign-v4-pre"
 	@echo "     (run 'make clean' to tear down the test registry)"

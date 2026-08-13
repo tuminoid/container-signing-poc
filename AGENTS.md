@@ -9,10 +9,11 @@ This is a container image signing and verification POC that demonstrates
 multiple approaches:
 
 1. **Signing**: Using Notation (with custom external signer plugin), Cosign v2
-   (external signer), or Cosign v3 (native signing)
-2. **Signature Transport**: Using Oras for moving signatures between registries
-3. **Admission-time Verification**: Using Kyverno admission controller
-4. **Runtime-level Verification**: Using CRI-O (native support) or Containerd
+   (external signer), Cosign v3 (native signing), or Cosign v4-pre (new
+   Sigstore bundle format only)
+1. **Signature Transport**: Using Oras for moving signatures between registries
+1. **Admission-time Verification**: Using Kyverno admission controller
+1. **Runtime-level Verification**: Using CRI-O (native support) or Containerd
    (OCI hooks)
 
 The POC follows defense-in-depth principle with two verification layers:
@@ -37,6 +38,9 @@ make cosign-v3
 
 # Run both cosign flows
 make cosign
+
+# Run Cosign v4-pre flow: standalone bundle sign + verify, no kyverno
+make cosign-v4-pre
 
 # Clean all test artifacts
 make clean
@@ -101,7 +105,32 @@ make verify-v2-sigs
 # Save/load operations (same as v2)
 make save
 make load
+
+# Reproduce sigstore/cosign#3976 on the legacy attach path (still broken)
+make repro-3976-legacy
 ```
+
+### Cosign v4-pre (`cosign-v4-pre/`)
+
+Requires **cosign >= 3.1.3** (enforced) and **registry:3** for OCI 1.1
+referrers. Uses no deprecated flags, since v4 makes bundles the only format.
+
+```bash
+# Full test: registry, certs, key import, sign, verify (+ negative control)
+make test
+
+# Individual steps, idempotent after setup
+make setup
+make sign
+make verify
+
+# Tear down registry and generated material
+make clean
+```
+
+`make test` passing is itself the demonstration that sigstore/cosign#3976 is
+fixed on the bundle codepath: the bundle carries leaf + intermediate only,
+while the trusted root carries only the root CA.
 
 ### Kyverno (`kyverno/`)
 
@@ -203,6 +232,19 @@ plugin that:
 - Can verify v2 attached signatures (backward compatible)
 - Can save/load entire image+signatures with `cosign save/load`
 
+**Cosign v4-pre**: Native signing into a v0.3 Sigstore bundle:
+
+- Sign with `cosign sign --key --certificate --certificate-chain`, no
+  deprecated flags
+- Bundle is stored as an OCI referrer, requiring registry:3
+- Chain in the bundle holds leaf + intermediate, root comes from
+  `--trusted-root`
+- Verification requires `--allow-certificate-chain`, and its absence fails
+  silently with `no signatures found`
+- Key must be imported with `cosign import-key-pair`, so external signing is
+  not possible
+- `cosign save`/`load` cannot transport bundles
+
 ### Kyverno Policies
 
 Two ClusterPolicy files in `kyverno/policy/`:
@@ -247,6 +289,7 @@ Different ports are used to avoid conflicts:
 - `127.0.0.1:5001` - Kyverno Kind registry
 - `127.0.0.1:5002` - Notation test registry
 - `127.0.0.1:5003` - CRI-O test registry / Cosign test registry
+- `127.0.0.1:5004` - Cosign v4-pre test registry (registry:3)
 
 ### Certificate Generation
 
@@ -340,6 +383,7 @@ or rejected (admission failed).
 │   └── examples/          # Example signing scripts
 ├── cosign-v2/             # Cosign v2 signing (external signer + attach)
 ├── cosign-v3/             # Cosign v3 native signing (new bundle format)
+├── cosign-v4-pre/         # Cosign v4-pre (v0.3 bundles only, registry:3)
 ├── oras/                  # Oras signature copying (shell)
 ├── kyverno/               # Kyverno admission controller policies
 │   ├── policy/            # ClusterPolicy YAML files
@@ -363,4 +407,4 @@ or rejected (admission failed).
 - When debugging, check container runtime logs: `journalctl -u crio` or
   `journalctl -u containerd`
 
-<!-- cSpell:ignore oras,kyverno,pkcs,sigstore,fulcio,rekor -->
+<!-- cSpell:ignore oras,kyverno,pkcs,sigstore,fulcio,rekor,referrers -->
