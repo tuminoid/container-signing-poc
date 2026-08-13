@@ -241,8 +241,9 @@ plugin that:
   `--trusted-root`
 - Verification requires `--allow-certificate-chain`, and its absence fails
   silently with `no signatures found`
-- Key must be imported with `cosign import-key-pair`, so external signing is
-  not possible
+- Key must be imported with `cosign import-key-pair` for native signing, but
+  external signing is still possible via a `sigstore-kms-*` plugin or by
+  building the bundle without cosign (`make v4-external-offline`)
 - `cosign save`/`load` cannot transport bundles
 
 ### Kyverno Policies

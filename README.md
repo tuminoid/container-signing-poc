@@ -152,10 +152,12 @@ and the legacy `cosign attach` path is removed:
 1. Verification requires `--allow-certificate-chain`. Without it cosign
    silently falls back to the legacy path and reports the misleading
    `no signatures found`.
-1. **External signing is not possible.** Native bundle signing needs a
-   cosign-encrypted key, so the private key must be handed to cosign. There is
-   no bundle equivalent of the v2 "sign externally, then attach" flow, which is
-   an open question for in-house signers.
+1. **External signing is possible, but not via `cosign attach`.** `cosign sign
+   --key` rejects raw PEM, but the key can stay out of cosign through a
+   `sigstore-kms-*` plugin (synchronous), `pkcs11:`, or a cloud KMS URI.
+   Alternatively the bundle can be built and published entirely without cosign,
+   signing the DSSE payload with openssl and publishing with `oras attach`; the
+   POC's `make v4-external-offline` demonstrates this asynchronous flow.
 1. **Bundles cannot be relocated with `cosign save`/`load`**, which only writes
    the image. `cosign copy` is deprecated and points at `oras copy -r` instead,
    so Oras becomes necessary again for signature transport.
