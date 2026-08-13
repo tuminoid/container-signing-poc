@@ -174,3 +174,79 @@ verify-v2-sigs:
 	@echo ""
 	@echo "[OK] v3 cosign successfully verified v2 attached signatures!"
 	@make -C ../cosign-v2 clean
+
+# ---------------------------------------------------------------------------
+# Reproduction for sigstore/cosign#3976:
+# "Intermediate cert and root CA must come via same source for verify to succeed"
+#
+# Signs an image whose attached cert chain contains ONLY the intermediate
+# (sub-ca), then verifies supplying ONLY the root CA as trust anchor. cosign
+# does not combine the embedded intermediate with the supplied root, so
+# verification FAILS - reproducing the issue. Tested against cosign v3.1.1.
+#
+#   make repro-3976   # runs the full reproduction (bug + positive control)
+# ---------------------------------------------------------------------------
+.PHONY: repro-3976 sign-intermediate-only verify-expect-fail verify-trusted-root-expect-fail
+
+# Overwrite the cert chain with the intermediate ONLY (drop the root), then sign.
+sign-intermediate-only:
+	@echo "==> Building attached cert chain with INTERMEDIATE ONLY (root dropped)..."
+	cp $(EXAMPLES_DIR)/sub-ca.crt $(EXAMPLES_DIR)/certificate_chain.pem
+	@echo "    chain certs: $$(grep -c 'BEGIN CERTIFICATE' $(EXAMPLES_DIR)/certificate_chain.pem) (intermediate only)"
+	$(MAKE) sign
+	@echo "    signatures on image: $$($(COSIGN_BIN) download signature $(TEST_IMAGE_SIGN) 2>/dev/null | jq -s 'length')"
+
+# Verify with ROOT ONLY - the issue means this MUST fail. A pass here means the
+# bug is fixed, so we invert the exit status accordingly.
+verify-expect-fail:
+	@echo "==> [legacy path] Verifying with ROOT ONLY (--ca-roots), expecting FAILURE..."
+	@if $(COSIGN_BIN) verify \
+		--new-bundle-format=false \
+		--ca-roots=$(EXAMPLES_DIR)/ca.crt \
+		--certificate-identity-regexp '.*' \
+		--certificate-oidc-issuer-regexp '.*' \
+		--private-infrastructure \
+		--insecure-ignore-sct \
+		$(TEST_IMAGE_SIGN) >/dev/null 2>&1; then \
+		echo "[FAIL] verification SUCCEEDED unexpectedly - issue #3976 appears FIXED"; exit 1; \
+	else \
+		echo "[OK] verification FAILED as expected - issue #3976 reproduced (legacy path)"; \
+	fi
+
+# Same, via the recommended --trusted-root codepath, with a trusted root that
+# contains ONLY the root CA. Expected to fail for the same reason.
+verify-trusted-root-expect-fail:
+	@echo "==> [trusted-root path] Building trusted root with ROOT CA ONLY..."
+	$(COSIGN_BIN) trusted-root create \
+		--fulcio="url=https://private.local,certificate-chain=$(EXAMPLES_DIR)/ca.crt" \
+		--out=$(EXAMPLES_DIR)/trusted-root-rootonly.json
+	@echo "==> [trusted-root path] Verifying with ROOT ONLY, expecting FAILURE..."
+	@if $(COSIGN_BIN) verify \
+		--new-bundle-format=false \
+		--trusted-root=$(EXAMPLES_DIR)/trusted-root-rootonly.json \
+		--certificate-identity-regexp '.*' \
+		--certificate-oidc-issuer-regexp '.*' \
+		--insecure-ignore-tlog \
+		--insecure-ignore-sct \
+		$(TEST_IMAGE_SIGN) >/dev/null 2>&1; then \
+		echo "[FAIL] verification SUCCEEDED unexpectedly - issue #3976 appears FIXED"; exit 1; \
+	else \
+		echo "[OK] verification FAILED as expected - issue #3976 reproduced (trusted-root path)"; \
+	fi
+
+# Full reproduction: bug case first (intermediate-only chain -> fails), then the
+# positive control from a clean state (full chain in same source -> passes).
+repro-3976: check-tools
+	@echo "########## PHASE 1: BUG - intermediate-only chain ##########"
+	$(MAKE) clean registry certificates
+	$(MAKE) sign-intermediate-only
+	$(MAKE) verify-expect-fail
+	$(MAKE) verify-trusted-root-expect-fail
+	@echo ""
+	@echo "########## PHASE 2: CONTROL - full chain (intermediate + root) ##########"
+	$(MAKE) clean registry certificates
+	$(MAKE) sign
+	$(MAKE) verify
+	@echo ""
+	@echo "[OK] Issue #3976 reproduced: intermediate-only chain fails, full chain passes"
+	@echo "     (run 'make clean' to tear down the test registry)"
