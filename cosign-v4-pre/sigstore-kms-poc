@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# sigstore-kms-poc: a minimal Sigstore KMS CLI plugin, external signer for cosign.
+#
+# cosign runs this binary when invoked with --key "poc://<ref>", because
+# sigstore's kms.Get() falls back to a program named sigstore-kms-<scheme> on
+# PATH (sigstore/sigstore#1901, wired into cosign by cosign#4073). cosign stays
+# the orchestrator and this plugin is only a signing oracle; the private key
+# never reaches cosign.
+#
+# In production this would talk to an HSM or a signing service instead of
+# calling openssl on a local key. The key is read from the KEY_PEM environment
+# variable and its bytes are never printed.
+#
+# Protocol (sigstore/sigstore pkg/signature/kms/cliplugin):
+#   argv[1] : protocol version, "v1"
+#   argv[2] : JSON PluginArgs, carrying .methodName and per-method args
+#   stdin   : bytes to sign, for signMessage
+#   stdout  : JSON PluginResp
+#
+# The leaf is an ECDSA P-384 key, which cosign classifies as SHA-384, so this
+# plugin declares ecdsa-sha2-384-nistp384 and signs with a SHA-384 digest.
+
+set -euo pipefail
+
+ALGORITHM="ecdsa-sha2-384-nistp384"
+KEY="${KEY_PEM:?KEY_PEM must point to the signing key}"
+
+method="$(jq -r '.methodName' <<<"${2:?missing plugin args}")"
+
+case "${method}" in
+defaultAlgorithm)
+	jq -cn --arg a "${ALGORITHM}" '{defaultAlgorithm: {defaultAlgorithm: $a}}'
+	;;
+supportedAlgorithms)
+	jq -cn --arg a "${ALGORITHM}" '{supportedAlgorithms: {supportedAlgorithms: [$a]}}'
+	;;
+publicKey)
+	pub="$(openssl pkey -in "${KEY}" -pubout | base64 -w0)"
+	jq -cn --arg p "${pub}" '{publicKey: {publicKeyPEM: $p}}'
+	;;
+signMessage)
+	tmp="$(mktemp)"
+	trap 'rm -f "${tmp}"' EXIT
+	cat > "${tmp}"
+	sig="$(openssl dgst -sha384 -sign "${KEY}" "${tmp}" | base64 -w0)"
+	jq -cn --arg s "${sig}" '{signMessage: {signature: $s}}'
+	;;
+*)
+	jq -cn --arg m "${method}" '{errorMessage: ("unsupported method: " + $m)}'
+	exit 1
+	;;
+esac

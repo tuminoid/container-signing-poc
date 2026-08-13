@@ -119,6 +119,12 @@ referrers. Uses no deprecated flags, since v4 makes bundles the only format.
 # Full test: registry, certs, key import, sign, verify (+ negative control)
 make test
 
+# External signer via a sigstore-kms plugin (key never given to cosign)
+make v4-external-plugin
+
+# Cosign-free asynchronous signing, published with oras attach
+make v4-external-offline
+
 # Individual steps, idempotent after setup
 make setup
 make sign
@@ -331,10 +337,11 @@ To build: `cd notation && make build`
 - RSA-PSS with SHA512
 - Custom algorithms via external signer
 
-**Cosign/Sigstore**: Limited to:
+**Cosign/Sigstore**: Limited to the algorithms in sigstore's
+[algorithm registry](https://github.com/sigstore/sigstore/blob/main/pkg/signature/algorithm_registry.go):
 
-- RSA256 with PKCS#1 only
-- Cannot easily support other algorithms due to Sigstore ecosystem requirements
+- RSA PKCS#1 v1.5 (2048/3072/4096) with SHA-256, and ECDSA P-256, P-384, P-521
+- RSA-PSS and SHA-512-with-RSA are excluded
 - All Sigstore services (Fulcio, Rekor) must support the same algorithms
 
 ### Transparency Logs

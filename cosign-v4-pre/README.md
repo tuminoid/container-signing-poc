@@ -12,17 +12,20 @@ against a trusted root holding **only the root CA**. Two signing flows are
 demonstrated:
 
 - `make test` signs natively with `cosign sign` and a cosign-imported key.
-- `make v4-external-offline` signs with `openssl` alone, never running cosign at
-  signing time, and publishes the bundle with `oras attach`. This mirrors an
-  asynchronous, in-house signing server.
+- `make v4-external-plugin` signs through an external `sigstore-kms-*` plugin,
+  so the private key never reaches cosign, while cosign still orchestrates.
+- `make v4-external-offline` signs with `openssl` alone, never running cosign
+  at signing time, and publishes the bundle with `oras attach`. This mirrors
+  an asynchronous, in-house signing server.
 
 Requires **cosign >= 3.1.3** (enforced), **registry:3** for OCI 1.1 referrers,
 plus docker, openssl, jq and oras. Test registry is `127.0.0.1:5004`.
 
 ```bash
-make test          # native cosign sign, then verify
+make test                 # native cosign sign, then verify
+make v4-external-plugin   # external signer via sigstore-kms plugin, then verify
 make v4-external-offline  # cosign-free openssl signing + oras publish, then verify
-make clean         # tear down
+make clean                # tear down
 ```
 
 No deprecated flags are used: `--new-bundle-format` is omitted (bundles are the
@@ -82,13 +85,23 @@ There are two ways to keep the private key away from cosign:
    ([sigstore#1901](https://github.com/sigstore/sigstore/pull/1901),
    [cosign#4073](https://github.com/sigstore/cosign/pull/4073)). Cosign still
    orchestrates and blocks on the plugin, so this suits an online signer, not an
-   asynchronous one. Not implemented here.
+   asynchronous one. Implemented here as `make v4-external-plugin`; the plugin is
+   `sigstore-kms-poc`, a small openssl wrapper that reads the key from
+   `KEY_PEM`. Architecturally this is the same model as the Notation
+   external-signer plugin in `../notation`.
 1. **Asynchronous, without cosign at all.** Build the bundle yourself and
    publish it as an OCI referrer. Implemented here as
    `make v4-external-offline`, see below.
 
 `pkcs11:` and cloud KMS URIs (`awskms://` and friends) are further options where
 the key never reaches cosign.
+
+The plugin must declare an algorithm that matches the key and digest. The leaf
+is ECDSA P-384, which cosign classifies as SHA-384, so `sigstore-kms-poc`
+declares `ecdsa-sha2-384-nistp384` and signs with a SHA-384 digest. A mismatch
+(for example signing with SHA-256) still verifies, but only through cosign's
+compatibility verifier, which prints `Failed to verify signature with default
+verifier, trying compatibility verifier` at signing time.
 
 ### Signing without cosign, asynchronously
 
@@ -163,6 +176,5 @@ repository when testing transport.
 ## Not covered
 
 Kyverno admission control (bundle + BYO-PKI support there is unverified),
-Rekor (deliberately absent), the synchronous plugin signer (Path A, planned),
-and `oras copy -r` relocation between registries (distinct from the `oras
-attach` publish shown here).
+Rekor (deliberately absent), and `oras copy -r` relocation between registries
+(distinct from the `oras attach` publish shown here).

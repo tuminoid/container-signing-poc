@@ -132,10 +132,13 @@ Basically, the POC is finding the following:
 1. Both v2 and v3 use same CA-based certificate verification
 1. Cosign can also save and load images with signatures by itself, Oras is not
    needed
-1. Cosign ecosystem can only handle SHA-256 hashing with RSA PKCS#1 v1.5.
-   Anything other than those (e.g., SHA-512, PSS padding) lack support as
-   Sigstore wants support to be homogenous across all of its services, so
-   implementing it is not trivial.
+1. The Cosign ecosystem restricts signatures to the algorithms in sigstore's
+   [algorithm registry](https://github.com/sigstore/sigstore/blob/main/pkg/signature/algorithm_registry.go):
+   RSA PKCS#1 v1.5 (2048/3072/4096) with SHA-256, and ECDSA P-256, P-384 and
+   P-521. RSA-PSS and SHA-512-with-RSA are excluded, as Sigstore keeps support
+   homogeneous across its services. The v4-pre POC signs with ECDSA P-384 and
+   SHA-384, so the earlier claim that only SHA-256 with RSA PKCS#1 works was
+   wrong.
 1. Kyverno can be used with Cosign the same as Notation, just a little bit more
    configuration needed in the manifest to disable transparency logs and SCTs.
 

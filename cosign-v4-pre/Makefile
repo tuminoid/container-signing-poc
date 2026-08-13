@@ -23,11 +23,11 @@ COSIGN_MIN_VERSION := 3.1.3
 export COSIGN_PASSWORD :=
 
 .PHONY: all check-tools registry certificates import-key signing-config \
-	trusted-root setup setup-nokey sign sign-offline verify \
-	verify-expect-fail test v4-external-offline clean
+	trusted-root setup setup-nokey sign sign-offline sign-plugin verify \
+	verify-expect-fail test v4-external-offline v4-external-plugin clean
 
 all:
-	@echo "targets: test v4-external-offline setup sign verify clean"
+	@echo "targets: test v4-external-offline v4-external-plugin setup sign verify clean"
 
 check-tools:
 	@for t in docker openssl jq oras $(COSIGN_BIN); do \
@@ -141,6 +141,34 @@ v4-external-offline: setup-nokey sign-offline verify
 		| jq '[.manifests[] | select(.artifactType == "application/vnd.dev.sigstore.bundle.v0.3+json")] | length'); \
 	if [ "$$n" != "1" ]; then echo "[FAIL] expected 1 bundle referrer, found $$n"; exit 1; fi
 	@echo "[OK] cosign-free bundle verified: signed by openssl, published by oras"
+
+# Path A: synchronous external signer. cosign runs sigstore-kms-poc as a signing
+# oracle via --key poc://leaf; the key stays in KEY_PEM and never reaches cosign.
+# signing-config is needed (no tlog), but import-key is not: that is the point.
+sign-plugin:
+	-$(COSIGN_BIN) clean --force $(TEST_IMAGE_SIGN) 2>/dev/null
+	PATH="$(CURDIR):$$PATH" KEY_PEM="$(CURDIR)/$(EXAMPLES_DIR)/leaf.key" \
+	$(COSIGN_BIN) sign \
+		--key=poc://leaf \
+		--certificate=$(EXAMPLES_DIR)/leaf.crt \
+		--certificate-chain=$(EXAMPLES_DIR)/sub-ca.crt \
+		--signing-config=$(EXAMPLES_DIR)/signing-config.json \
+		--trusted-root=$(EXAMPLES_DIR)/trusted-root.json \
+		--yes \
+		$(TEST_IMAGE_SIGN)
+
+v4-external-plugin: setup-nokey signing-config sign-plugin verify verify-expect-fail
+	@test ! -f $(EXAMPLES_DIR)/leaf-imported.key || \
+		{ echo "[FAIL] a key was imported into cosign; external signing not proven"; exit 1; }
+	@bd=$$(curl -s -H 'Accept: application/vnd.oci.image.index.v1+json' \
+		http://$(TEST_REGISTRY)/v2/$(TEST_IMAGE)/manifests/$(subst :,-,$(TEST_DIGEST_LOCAL)) \
+		| jq -r '.manifests[] | select(.artifactType == "application/vnd.dev.sigstore.bundle.v0.3+json") | .digest'); \
+	blob=$$(curl -s -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+		http://$(TEST_REGISTRY)/v2/$(TEST_IMAGE)/manifests/$$bd | jq -r '.layers[0].digest'); \
+	n=$$(curl -sL http://$(TEST_REGISTRY)/v2/$(TEST_IMAGE)/blobs/$$blob \
+		| jq '.verificationMaterial.x509CertificateChain.certificates | length'); \
+	if [ "$$n" != "2" ]; then echo "[FAIL] expected 2 certs (leaf+intermediate), found $$n"; exit 1; fi
+	@echo "[OK] external-signer bundle verified: key never given to cosign, 2-cert chain"
 
 clean:
 	rm -rf $(EXAMPLES_DIR)
