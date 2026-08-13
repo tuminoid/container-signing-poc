@@ -93,11 +93,11 @@ flowchart TD
 **Steps:**
 
 1. CRI-O checks `/etc/containers/policy.json` for registry match
-2. If `sigstoreSigned` with `pki`, validates:
+1. If `sigstoreSigned` with `pki`, validates:
    - Certificate chain: Root CA → Intermediate CA → Leaf
    - Certificate identity: `subjectEmail` matches `ci-build@example.com`
    - Cryptographic signature
-3. Pulls image if all checks pass, rejects otherwise
+1. Pulls image if all checks pass, rejects otherwise
 
 ### Why BYO-PKI?
 
@@ -162,9 +162,11 @@ etc. in `default`
 ```shell
 sudo journalctl -u crio | grep -i signature`
 # Verify cert chain:
-openssl verify -CAfile examples/ca.crt -untrusted examples/sub-ca.crt examples/leaf.crt
+openssl verify -CAfile examples/ca.crt -untrusted examples/sub-ca.crt \
+    examples/leaf.crt
 # Check email:
-openssl x509 -in examples/leaf.crt -noout -text | grep -A2 "Subject Alternative Name"
+openssl x509 -in examples/leaf.crt -noout -text | \
+    grep -A2 "Subject Alternative Name"
 ```
 
 ## References

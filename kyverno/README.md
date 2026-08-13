@@ -33,6 +33,7 @@ Verifying signatures with Notation "offline", please see
 [Notation External Signer documentation](../notation/README.md).
 
 Verifying signatures with Cosign "offline":
+
 - [Cosign v2 documentation](../cosign-v2/README.md) (external signer)
 - [Cosign v3 documentation](../cosign-v3/README.md) (native signing)
 
@@ -50,6 +51,7 @@ via `make notation`, `make cosign-v2`, or `make cosign-v3`.
 
 Kyverno's Makefile has `make setup` sets up the full setup with Kind cluster,
 local registry. Then run one of:
+
 - `make -f cosign-v2.mk` (Cosign v2 tests with external signer)
 - `make -f cosign-v3.mk` (Cosign v3 tests with native signing)
 - `make -f notation.mk` (Notation tests)

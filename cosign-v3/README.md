@@ -14,19 +14,22 @@ with v3's internal signature handling and bundle format.
 
 **Important Notes:**
 
-1. **BYO-PKI Constraint**: Cosign's native `cosign sign --key` command only works with
-   cosign-generated keys (via `cosign generate-key-pair`), not BYO-PKI OpenSSL keys.
-   For BYO-PKI, both v2 and v3 use the external signer approach (`cosign generate`
-   → OpenSSL sign → `cosign attach signature`).
+1. **BYO-PKI Constraint**: Cosign's native `cosign sign --key` command only
+   works with cosign-generated keys (via `cosign generate-key-pair`), not
+   BYO-PKI OpenSSL keys. For BYO-PKI, both v2 and v3 use the external signer
+   approach (`cosign generate` → OpenSSL sign → `cosign attach signature`).
 
-2. **Bundle Format**: Cosign v3.0+ defaults to `--new-bundle-format=true`, which requires
-   `--trusted-root` instead of `--ca-roots`. For BYO-PKI with CA-based verification,
-   you MUST set `--new-bundle-format=false` when verifying:
+1. **Bundle Format**: Cosign v3.0+ defaults to `--new-bundle-format=true`,
+   which requires `--trusted-root` instead of `--ca-roots`. For BYO-PKI with
+   CA-based verification, you MUST set `--new-bundle-format=false` when
+   verifying:
+
    ```bash
    cosign verify --new-bundle-format=false --ca-roots=ca.crt ...
    ```
-   Without this flag, you'll get: "CA roots/intermediates must be provided using
-   --trusted-root when using --new-bundle-format"
+
+   Without this flag, you'll get: "CA roots/intermediates must be provided
+   using --trusted-root when using --new-bundle-format"
 
 **Trust model:** Both v2 and v3 use the same CA-based certificate verification.
 
@@ -66,18 +69,21 @@ NOTE: all this is done by `make test`, this is just explaining what it does.
 The workflow is the same as v2 for BYO-PKI compatibility:
 
 1. Generate payload
+
    ```sh
    cosign generate 127.0.0.1:5003/alpine:3.20.3 > examples/payload.json
    ```
 
-2. Sign with OpenSSL (external signer)
+1. Sign with OpenSSL (external signer)
+
    ```sh
    openssl dgst -sha256 -sign examples/leaf.key \
        -out examples/payload.sig examples/payload.json
    base64 examples/payload.sig > examples/payloadbase64.sig
    ```
 
-3. Attach signature using v3 binary
+1. Attach signature using v3 binary
+
    ```sh
    cosign attach signature \
        --payload examples/payload.json \
@@ -159,10 +165,11 @@ testing that the patched cosign correctly auto-detects the signature format.
 **Critical Notes:**
 
 1. **`cosign sign --key`:** This native v3 signing command only works with
-   cosign-generated keys (`cosign generate-key-pair`), not OpenSSL BYO-PKI keys.
-   For BYO-PKI use cases, the external signer workflow is required in both v2 and v3.
+   cosign-generated keys (`cosign generate-key-pair`), not OpenSSL BYO-PKI
+   keys. For BYO-PKI use cases, the external signer workflow is required in
+   both v2 and v3.
 
-2. **`--new-bundle-format=false`:** Required for v3 verification when using `--ca-roots`.
-   Without this flag, cosign v3 will error with "CA roots/intermediates must be provided
-   using --trusted-root when using --new-bundle-format".
-
+1. **`--new-bundle-format=false`:** Required for v3 verification when using
+   `--ca-roots`. Without this flag, cosign v3 will error with "CA
+   roots/intermediates must be provided using --trusted-root when using
+   --new-bundle-format".
