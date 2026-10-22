@@ -2,6 +2,10 @@
 <!-- cSpell:ignore kyverno,oras,sigstore,rebranded,pkcs,fulcio,rekor -->
 <!-- cSpell:ignore containerd,referrers -->
 
+This repository continues the 2024 POC in
+[Nordix/metal3-clusterapi-docs](https://github.com/Nordix/metal3-clusterapi-docs/tree/main/security/container-signing-poc);
+history before 2025-09-26 is there.
+
 This experiment has multiple parts and options:
 
 1. Image signing:
