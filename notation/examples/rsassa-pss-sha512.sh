@@ -12,5 +12,5 @@
 
 set -eu
 
-openssl dgst -sha512 -sign "${EXTERNAL_PRIVATE_KEY}" \
+openssl dgst -sha512 -sign "${EXTERNAL_PRIVATE_KEY:?must point to the signing key}" \
     -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:32

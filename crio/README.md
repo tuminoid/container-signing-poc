@@ -5,6 +5,11 @@
 Runtime signature verification using CRI-O's native `containers/image` library
 with X.509 certificate chains.
 
+Legacy cosign signatures only: the library cannot read Sigstore bundles, the
+only format in cosign v4
+([container-libs#388](https://github.com/podman-container-tools/container-libs/issues/388)).
+Run it in a VM with `make -C ../vm crio`.
+
 ## Requirements
 
 - **CRI-O 1.34+** (requires [containers/image
@@ -19,9 +24,8 @@ Check version: `crio --version | grep GitCommitDate` (must be after 2025-02-28)
 ```bash
 make setup    # Install CRI-O 1.34, k8s, docker, cosign (requires reboot)
 # <reboot>
-make run      # Auto-init k8s, sign images (v2 & v3), run tests
+make run      # Auto-init k8s, sign images, run tests
 make test-v2  # Test only v2 signatures
-make test-v3  # Test only v3 signatures
 make clean    # Reset everything
 ```
 

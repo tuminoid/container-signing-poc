@@ -312,10 +312,11 @@ Notation and Cosign examples auto-generate these with OpenSSL.
 
 Both CRI-O and Containerd POCs:
 
+- Run in disposable QEMU VMs via `make -C vm crio` / `make -C vm containerd`
+  (`vm/`, host needs qemu, cloud-image-utils and /dev/kvm, no root)
 - Require Ubuntu 24.04 VM (or similar Linux distro)
 - Need sudo/root access for system configuration
 - Require reboot after initial setup
-- Cannot be tested on local macOS/Windows machines
 - Use `crictl` for container management (not `docker`)
 
 ### Go Module
@@ -404,7 +405,8 @@ or rejected (admission failed).
 
 - Always run `make` without arguments to see available targets
 - Check README.md files in each subdirectory for detailed instructions
-- Runtime verification POCs require VMs - do not attempt on local machine
+- Runtime verification POCs require VMs: run them through `make -C vm`,
+  never on the host
 - Use `make clean` frequently to reset test state
 - When debugging, check container runtime logs: `journalctl -u crio` or
   `journalctl -u containerd`

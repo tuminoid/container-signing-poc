@@ -120,7 +120,7 @@ chmod a+r /etc/apt/keyrings/docker.gpg
 # shellcheck disable=SC1091
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | \
+  $(. /etc/os-release && echo "${VERSION_CODENAME:?}") stable" | \
   tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 apt-get update -qq
@@ -174,6 +174,20 @@ echo "==> Creating directories..."
 mkdir -p /etc/containers/registries.d
 mkdir -p /etc/containers/keys
 echo "   OK: Directories created"
+echo ""
+
+echo "==> Allowing plain http for the local test registries..."
+mkdir -p /etc/containers/registries.conf.d
+cat > /etc/containers/registries.conf.d/50-signing-poc.conf <<'EOF'
+[[registry]]
+location = "127.0.0.1:5003"
+insecure = true
+
+[[registry]]
+location = "127.0.0.1:5002"
+insecure = true
+EOF
+echo "   OK: 127.0.0.1:5003 and 127.0.0.1:5002 over http"
 echo ""
 
 echo "==> Setup complete!"

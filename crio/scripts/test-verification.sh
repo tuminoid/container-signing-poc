@@ -3,6 +3,13 @@
 
 set -euo pipefail
 
+# Every [ERROR] counts; the script exits non-zero if any occurred.
+FAILURES=0
+fail() {
+    FAILURES=$((FAILURES + 1))
+    echo "[ERROR] $*"
+}
+
 echo "==> Testing CRI-O signature verification (BYO-PKI)..."
 echo ""
 
@@ -64,7 +71,7 @@ if sudo crictl pull 127.0.0.1:5003/alpine:3.20.3 2>&1 | tee /tmp/crio-test-signe
     echo "   Certificate chain validation passed"
 else
     echo ""
-    echo "[ERROR] ERROR: Signed image pull FAILED"
+    fail "ERROR: Signed image pull FAILED"
     echo "   Make sure you ran: make run (it sets up automatically)"
     echo ""
     echo "   Check CRI-O logs: sudo journalctl -u crio -n 50"
@@ -78,7 +85,7 @@ echo "   Image: 127.0.0.1:5003/alpine:unsigned"
 echo ""
 if sudo crictl pull 127.0.0.1:5003/alpine:unsigned 2>&1 | tee /tmp/crio-test-unsigned.log; then
     echo ""
-    echo "[ERROR] ERROR: Unsigned image pull SUCCEEDED (should have failed!)"
+    fail "ERROR: Unsigned image pull SUCCEEDED (should have failed!)"
     echo "   Check policy.json configuration"
 else
     echo ""
@@ -92,12 +99,16 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
     # Ensure node is Ready before running pod tests
     echo "==> Ensuring Kubernetes node is Ready..."
     if ! kubectl wait --for=condition=Ready nodes --all --timeout=60s 2>/dev/null; then
-        echo "   WARNING: Node not Ready, skipping pod tests"
+        fail "Node not Ready, pod tests skipped"
         kubectl get nodes -o wide
         echo ""
         echo "==> Skipping Kubernetes pod tests (node not ready)"
         echo ""
-        echo "==> Testing complete!"
+        if [[ "${FAILURES}" -gt 0 ]]; then
+    echo "==> ${FAILURES} check(s) FAILED"
+    exit 1
+fi
+echo "==> Testing complete!"
         echo ""
         echo "Summary:"
         echo "  BYO-PKI certificate chain verification is working"
@@ -106,7 +117,7 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
         echo ""
         echo "View CRI-O logs for detailed verification:"
         echo "  sudo journalctl -u crio -n 50 | grep -i signature"
-        exit 0
+        exit 1
     fi
     echo "   OK: Node is Ready"
     echo ""
@@ -141,13 +152,13 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
             kubectl get pod signed-alpine-crio
         else
             echo ""
-            echo "[ERROR] ERROR: Pod status: ${POD_STATUS}"
+            fail "ERROR: Pod status: ${POD_STATUS}"
             kubectl describe pod signed-alpine-crio | tail -20
         fi
         kubectl delete pod signed-alpine-crio --wait=false >/dev/null 2>&1 || true
     else
         echo ""
-        echo "[ERROR] ERROR: Signed pod CREATE FAILED"
+        fail "ERROR: Signed pod CREATE FAILED"
     fi
     echo ""
 
@@ -185,11 +196,11 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
                 kubectl describe pod unsigned-alpine-crio | grep -A5 "Events:" | tail -3 || true
             else
                 echo ""
-                echo "[ERROR] WARNING: Pod blocked but reason unclear: ${REASON}"
+                fail "WARNING: Pod blocked but reason unclear: ${REASON}"
             fi
         elif [[ "${POD_STATUS}" == "Running" ]]; then
             echo ""
-            echo "[ERROR] ERROR: Unsigned pod is RUNNING (should have failed!)"
+            fail "ERROR: Unsigned pod is RUNNING (should have failed!)"
             kubectl get pod unsigned-alpine-crio
         else
             echo ""
@@ -199,7 +210,7 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
         kubectl delete pod unsigned-alpine-crio --wait=false >/dev/null 2>&1 || true
     else
         echo ""
-        echo "[ERROR] ERROR: Unsigned pod CREATE FAILED"
+        fail "ERROR: Unsigned pod CREATE FAILED"
     fi
     echo ""
 else
@@ -208,6 +219,10 @@ else
     echo ""
 fi
 
+if [[ "${FAILURES}" -gt 0 ]]; then
+    echo "==> ${FAILURES} check(s) FAILED"
+    exit 1
+fi
 echo "==> Testing complete!"
 echo ""
 echo "Summary:"

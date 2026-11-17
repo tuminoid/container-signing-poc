@@ -200,10 +200,12 @@ not part of the flows above.
 
 ### CRI-O and containerd e2e tests
 
-These scenarios should be run in standalone test VMs as they will install
-and configure container runtimes and not care if there is existing configurations.
-For these, in respective directories, run `make setup` to install and configure
-the runtime, then `make run` to run the e2e tests.
+These install and configure container runtimes system-wide, so they run in
+disposable QEMU VMs: `make -C vm crio` and `make -C vm containerd` start an
+Ubuntu 24.04 VM, copy the directory in, run `make setup`, reboot, and run
+`make test`. No root on the host; state is under `build/vm`, removed by
+`make -C vm clean`. On an existing VM, run `make setup`, reboot, `make test`
+in the directory.
 
 ## Notes
 

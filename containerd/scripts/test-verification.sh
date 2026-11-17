@@ -3,6 +3,13 @@
 
 set -euo pipefail
 
+# Every [ERROR] counts; the script exits non-zero if any occurred.
+FAILURES=0
+fail() {
+    FAILURES=$((FAILURES + 1))
+    echo "[ERROR] $*"
+}
+
 echo "==> Testing containerd Transfer Service signature verification (Per-Registry Policies)..."
 echo ""
 
@@ -69,13 +76,13 @@ if kubectl apply -f manifests/signed-pod.yaml 2>&1 | tee /tmp/containerd-test-si
         sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -3 || true
     else
         echo ""
-        echo "[ERROR] ERROR: Pod status: ${POD_STATUS}"
+        fail "ERROR: Pod status: ${POD_STATUS}"
         kubectl describe pod test-signed | tail -30
     fi
     kubectl delete pod test-signed --wait=false >/dev/null 2>&1 || true
 else
     echo ""
-    echo "[ERROR] ERROR: Signed image pod CREATE FAILED"
+    fail "ERROR: Signed image pod CREATE FAILED"
 fi
 echo ""
 
@@ -114,7 +121,7 @@ if kubectl apply -f manifests/unsigned-pod.yaml 2>&1 | tee /tmp/containerd-test-
         fi
     elif [[ "${POD_STATUS}" == "Running" ]]; then
         echo ""
-        echo "[ERROR] ERROR: Unsigned image pod RUNNING"
+        fail "ERROR: Unsigned image pod RUNNING"
         echo "   Verifier did NOT block this!"
         sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -5 || true
     else
@@ -162,7 +169,7 @@ if kubectl apply -f manifests/gcr-blocked-pod.yaml 2>&1 | tee /tmp/containerd-te
         fi
     elif [[ "${POD_STATUS}" == "Running" ]]; then
         echo ""
-        echo "[ERROR] ERROR: gcr.io image pod RUNNING"
+        fail "ERROR: gcr.io image pod RUNNING"
         echo "   Policy did NOT block this!"
         sudo journalctl -t containerd-verifier --since '30 sec ago' | tail -5 || true
     else
@@ -199,10 +206,14 @@ if kubectl apply -f manifests/secondary-registry-pod.yaml 2>&1 | tee /tmp/contai
     kubectl delete pod test-secondary-registry --wait=false >/dev/null 2>&1 || true
 else
     echo ""
-    echo "[ERROR] ERROR: Secondary registry pod CREATE FAILED"
+    fail "ERROR: Secondary registry pod CREATE FAILED"
 fi
 echo ""
 
+if [[ "${FAILURES}" -gt 0 ]]; then
+    echo "==> ${FAILURES} check(s) FAILED"
+    exit 1
+fi
 echo "==> Testing complete!"
 echo ""
 echo "Summary:"

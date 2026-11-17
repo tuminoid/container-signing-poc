@@ -25,12 +25,13 @@ CONFIG_FILE="/etc/containerd/image-verifier.conf"
 if [[ -f "${CONFIG_FILE}" ]]; then
     # Load env vars from config file using a safer method
     # Read line by line and export, avoiding bash interpretation of special chars
-    while IFS= read -r line || [[ -n "$line" ]]; do
+    while IFS= read -r line || [[ -n "${line}" ]]; do
         # Skip comments and empty lines
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "$line" ]] && continue
-        # Export the variable
-        export "$line"
+        [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line}" ]] && continue
+        # Export the KEY=VALUE line as is
+        # shellcheck disable=SC2163
+        export "${line}"
     done < "${CONFIG_FILE}"
 fi
 
@@ -85,7 +86,7 @@ for var in $(compgen -e | grep '^REGISTRY_POLICY_' || true); do
     policy_value="${!var}"
 
     # Parse policy: "registry_pattern|ca_cert_path" or "registry_pattern|ALLOW" or "registry_pattern|BLOCK"
-    IFS='|' read -r registry_pattern ca_path <<< "$policy_value"
+    IFS='|' read -r registry_pattern ca_path <<< "${policy_value}"
 
     # Check if image name matches this registry pattern
     if [[ "${IMAGE_NAME}" =~ ^${registry_pattern} ]]; then

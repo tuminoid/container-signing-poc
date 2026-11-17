@@ -5,6 +5,8 @@
 Runtime signature verification using containerd 2.1+ Transfer Service with
 BYO-PKI certificates (X.509).
 
+Run it in a VM with `make -C ../vm containerd`.
+
 ## This is THE Official Approach
 
 This implementation uses containerd's **official image verification plugin**
@@ -53,9 +55,8 @@ for discussion on this limitation.
 ```bash
 make setup    # Install containerd 2.1+, k8s, docker, cosign (requires reboot)
 # <reboot>
-make run      # Install verifier, init k8s, sign images (v2 & v3), run tests
+make run      # Install verifier, init k8s, sign images, run tests
 make test-v2  # Test only v2 signatures
-make test-v3  # Test only v3 signatures
 make clean    # Reset everything
 ```
 
