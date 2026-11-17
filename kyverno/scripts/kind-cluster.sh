@@ -31,21 +31,18 @@ EOF
 #
 # We want a consistent name that works from both ends, so we tell containerd to
 # alias localhost:${REG_PORT} to the registry container when pulling images
-REGISTRY_DIR="/etc/containerd/certs.d/localhost:${REG_PORT}"
+# Workloads reference ${REG_NAME}:5000, the name Kyverno also resolves from
+# inside the cluster, so map that over plain http too.
 for node in $(kind get nodes --name=kyverno); do
-    docker exec "${node}" mkdir -p "${REGISTRY_DIR}"
-    cat <<EOF | docker exec -i "${node}" cp /dev/stdin "${REGISTRY_DIR}/hosts.toml"
+    for host in "localhost:${REG_PORT}" "${REG_NAME}:5000"; do
+        docker exec "${node}" mkdir -p "/etc/containerd/certs.d/${host}"
+        cat <<EOF | docker exec -i "${node}" cp /dev/stdin "/etc/containerd/certs.d/${host}/hosts.toml"
 [host."http://${REG_NAME}:5000"]
 EOF
+    done
 done
 
-# 4. Connect the registry to the cluster network if not already connected
-# This allows kind to bootstrap the network but ensures they're on the same network
-if [[ "$(docker inspect -f='{{json .NetworkSettings.Networks.kind}}' "${REG_NAME}")" = 'null' ]]; then
-    docker network connect "kind" "${REG_NAME}"
-fi
-
-# 5. Document the local registry
+# 4. Document the local registry
 # https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
 cat <<EOF | kubectl apply -f -
 apiVersion: v1

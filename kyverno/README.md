@@ -1,59 +1,58 @@
-<!-- markdownlint-disable line-length -->
-<!-- cSpell:ignore kyverno -->
+<!-- cSpell:ignore kyverno,oras,notation,sigstore,tlog -->
 
-# Image signature verification
+# Admission-time verification with Kyverno
 
-Verifying image signatures runtime using Notation or Cosign, and Kyverno.
+Kyverno `ImageValidatingPolicy` rejects pods whose images are not signed by the
+configured private CA. Kyverno 1.20 no longer runs `kyverno.io` `ClusterPolicy`,
+so the policies use `policies.kyverno.io/v1`. The chart version is pinned in
+`Makefile`.
 
 ```mermaid
-flowchart TB
-    user(User)
-    cert(CA public root cert)
-    registry(Docker registry)
-    kyverno(Kyverno admission controller)
-    policy(Kyverno ClusterPolicy)
-    cluster(k8s cluster)
-    workload(Workload)
+flowchart LR
+    sign(Sign in a build registry)
+    move(Relocate image and signatures)
+    reg(Kind registry)
+    kyv(Kyverno ImageValidatingPolicy)
+    pod(Pod)
 
-    user-->|load image and signature|registry
-    user-->|install|kyverno
-    user-->|apply workload|workload
-    user-->|configures|policy
-    policy-->|verifies signature with|kyverno
-    cert-->|configured in|policy
-    registry-->|create from|workload
-    workload-->|runs in|cluster
-    kyverno-->|admits|workload
-    kyverno-->|reads signature from|registry
+    sign-->move
+    move-->reg
+    reg-->|signature|kyv
+    kyv-->|admits or denies|pod
+    reg-->|image|pod
 ```
 
-## Non-runtime verification
+Each flow signs in its own registry, relocates the signed image with its
+signatures into the Kind registry, applies the policy, and asserts that the
+unsigned pod and deployment are denied while the signed ones are admitted and
+run.
 
-Verifying signatures with Notation "offline", please see
-[Notation External Signer documentation](../notation/README.md).
+| Flow | Signed by | Relocated with | Policy |
+| -- | -- | -- | -- |
+| `cosign-v2.mk` | [../cosign-v2](../cosign-v2/README.md) | `cosign save`, `cosign load` | `policy/kyverno-policy-cosign.yaml` |
+| `cosign-v3.mk` | [../cosign-v3](../cosign-v3/README.md) | `cosign save`, `cosign load` | `policy/kyverno-policy-cosign.yaml` |
+| `notation.mk` | [../notation](../notation/README.md) | `oras cp` via OCI layout tarball | `policy/kyverno-policy-notation.yaml` |
 
-Verifying signatures with Cosign "offline":
+```bash
+make setup               # Kind cluster, registry, Kyverno; rerunnable
+make -f cosign-v2.mk
+make -f cosign-v3.mk
+make -f notation.mk
+make clean
+```
 
-- [Cosign v2 documentation](../cosign-v2/README.md) (external signer)
-- [Cosign v3 documentation](../cosign-v3/README.md) (native signing)
+The top-level `make cosign-v2`, `make cosign-v3` and `make notation` run setup
+plus the flow.
 
-## Runtime verification
+## Notes
 
-For runtime signature verification, we use
-[Kyverno with Notation](https://kyverno.io/docs/writing-policies/verify-images/notary/),
-or [Kyverno with Cosign](https://kyverno.io/docs/writing-policies/verify-images/sigstore/)
-
-Both Cosign v2 and v3 use the same Kyverno policy with CA-based certificate
-verification. The difference is only in the signing command and bundle format.
-
-This is part of e2e tests, suggested to run via repository top-level `Makefile`
-via `make notation`, `make cosign-v2`, or `make cosign-v3`.
-
-Kyverno's Makefile has `make setup` sets up the full setup with Kind cluster,
-local registry. Then run one of:
-
-- `make -f cosign-v2.mk` (Cosign v2 tests with external signer)
-- `make -f cosign-v3.mk` (Cosign v3 tests with native signing)
-- `make -f notation.mk` (Notation tests)
-
-Use `make clean` to remove everything.
+- Both cosign flows verify legacy signatures (`.sig` tag, simple signing
+  payload). The CA is the root only; the intermediate travels with the
+  signature.
+- Workloads reference `kind-registry:5000`, which both the Kind nodes and the
+  Kyverno pod resolve. `scripts/kind-cluster.sh` maps it to plain http in
+  containerd, and Kyverno runs with `--allowInsecureRegistry`.
+- The PEM block in each policy is a placeholder replaced with the flow's
+  generated CA by `common.mk`.
+- Sigstore bundles from [../cosign-v4-pre](../cosign-v4-pre/README.md) are not
+  admissible with a private CA and no timestamp authority, see that README.
