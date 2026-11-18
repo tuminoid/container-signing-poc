@@ -112,17 +112,25 @@ flowchart TD
 
 ## Testing
 
-The test suite runs 4 tests (2 at CRI level, 2 at Kubernetes level):
+The test suite runs 5 tests at CRI level and 2 at Kubernetes level:
 
 ```bash
 # CRI level tests
 sudo crictl pull 127.0.0.1:5003/alpine:3.20.3    # Test 1: signed → OK
 sudo crictl pull 127.0.0.1:5003/alpine:unsigned  # Test 2: unsigned → FAIL
+sudo crictl pull 127.0.0.1:5003/bundle-only:3.20.3  # Test 5: bundle only → FAIL
 
 # Kubernetes level tests
 kubectl apply -f manifests/signed-pod.yaml       # Test 3: → Running
 kubectl apply -f manifests/unsigned-pod.yaml     # Test 4: → ImagePullBackOff
 ```
+
+Test 5 is a tripwire: `make sign-image-bundle-only` signs the image with a
+Sigstore bundle alone, without cosign, through
+`../cosign-v4-pre/sign-offline.sh` and this directory's PKI, and asserts
+that `cosign verify` accepts it. CRI-O must fail the pull with
+`A signature was required, but no signature exists`, as for an unsigned
+image; a CRI-O that reads bundles fails the test.
 
 **Note:** While the policy configures 4 scenarios (primary registry verify,
 secondary registry allow, gcr.io block, default allow), the test suite focuses

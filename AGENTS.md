@@ -14,7 +14,7 @@ multiple approaches:
 1. **Signature Transport**: Using Oras for moving signatures between registries
 1. **Admission-time Verification**: Using Kyverno admission controller
 1. **Runtime-level Verification**: Using CRI-O (native support) or Containerd
-   (OCI hooks)
+   (Transfer Service verifier)
 
 The POC follows defense-in-depth principle with two verification layers:
 
@@ -30,17 +30,21 @@ The POC follows defense-in-depth principle with two verification layers:
 # Run full Notation flow: sign → oras copy → kyverno verify
 make notation
 
-# Run Cosign v2 flow: sign → kyverno verify
+# Run Cosign v2 flow: sign → cosign save/load → kyverno verify
 make cosign-v2
 
-# Run Cosign v3 flow: sign → kyverno verify
+# Run Cosign v3 flow: sign → cosign save/load → kyverno verify
 make cosign-v3
 
 # Run both cosign flows
 make cosign
 
-# Run Cosign v4-pre flow: standalone bundle sign + verify, no kyverno
+# Run Cosign v4-pre: bundle flows standalone, then every bundle
+# Kyverno flow (sign → oras relocation → kyverno verify)
 make cosign-v4-pre
+
+# Tripwire: cosign main at a pinned commit fails the legacy attach flow
+make tripwire-cosign-main
 
 # Clean all test artifacts
 make clean
@@ -112,8 +116,8 @@ make repro-3976-legacy
 
 ### Cosign v4-pre (`cosign-v4-pre/`)
 
-Requires **cosign >= 3.1.3** (enforced) and **registry:3** for OCI 1.1
-referrers. Uses no deprecated flags, since v4 makes bundles the only format.
+Requires **cosign >= 3.1.3** (enforced) and an OCI 1.1 registry, registry:3 or
+zot. Uses no deprecated flags, since v4 makes bundles the only format.
 
 ```bash
 # Full test: registry, certs, key import, sign, verify (+ negative control)
@@ -124,6 +128,16 @@ make v4-external-plugin
 
 # Cosign-free asynchronous signing, published with oras attach
 make v4-external-offline
+
+# Kyverno-admissible shape: leaf-only bundle, signed timestamp from a TSA
+make v4-tsa
+
+# v4-tsa, then relocate image + bundle via OCI layout tarball, verify there
+make v4-relocate
+
+# Further flows, each asserting one finding, see cosign-v4-pre/README.md
+make v4-rsa v4-referrers v4-save-load v4-dev-signatures v4-rotation \
+    v4-multiarch v4-shapes v4-tls v4-leaf-expiry
 
 # Individual steps, idempotent after setup
 make setup
@@ -141,7 +155,8 @@ while the trusted root carries only the root CA.
 ### Kyverno (`kyverno/`)
 
 ```bash
-# Setup Kind cluster with Kyverno (one-time)
+# Setup Kind cluster, registry:3, zot and pinned Kyverno (rerunnable,
+# registries start empty)
 make setup
 
 # Run Notation e2e test
@@ -152,6 +167,15 @@ make -f cosign-v2.mk
 
 # Run Cosign v3 e2e test
 make -f cosign-v3.mk
+
+# Run Sigstore bundle e2e test (cosign-v4-pre v4-tsa; SIGN_TARGET=v4-rsa,
+# DIGEST=false), and the further bundle flows
+make -f cosign-v4-pre.mk
+make -f bundle-dev.mk   # also bundle-zot.mk bundle-shapes.mk bundle-multiarch.mk
+                        # bundle-expiry.mk
+
+# ClusterPolicy refused, ImageValidatingPolicy API versions
+make api-versions
 
 # Clean up cluster and registry
 make clean
@@ -242,7 +266,8 @@ plugin that:
 
 - Sign with `cosign sign --key --certificate --certificate-chain`, no
   deprecated flags
-- Bundle is stored as an OCI referrer, requiring registry:3
+- Bundle is stored as an OCI referrer, requiring an OCI 1.1 registry: the
+  fallback tag on registry:3, the referrers API on zot
 - Chain in the bundle holds leaf + intermediate, root comes from
   `--trusted-root`
 - Verification requires `--allow-certificate-chain`, and its absence fails
@@ -250,18 +275,26 @@ plugin that:
 - Key must be imported with `cosign import-key-pair` for native signing, but
   external signing is still possible via a `sigstore-kms-*` plugin or by
   building the bundle without cosign (`make v4-external-offline`)
-- `cosign save`/`load` cannot transport bundles
+- `sign-offline.sh` is the cosign-free entry point for other repositories,
+  configured by environment variables, see `cosign-v4-pre/README.md`
+- `cosign save`/`load` carry bundles in a layout only `cosign load` reads;
+  `oras cp -r` moves them through a standard layout (`make v4-relocate`)
+- Kyverno admits a bundle only when it carries the leaf alone (intermediate in
+  the trusted root) and a signed timestamp (`make v4-tsa`)
 
 ### Kyverno Policies
 
-Two ClusterPolicy files in `kyverno/policy/`:
+`ImageValidatingPolicy` (`policies.kyverno.io/v1`) files in `kyverno/policy/`,
+since Kyverno 1.20 no longer runs `ClusterPolicy`:
 
-1. `kyverno-policy-notation.yaml`: Verifies Notation signatures
-1. `kyverno-policy-cosign.yaml`: Verifies Cosign signatures (with transparency
-   logs disabled) - works for both v2 and v3 as both use CA-based verification
+1. `kyverno-policy-notation.yaml`: Notation signatures, root CA
+1. `kyverno-policy-cosign.yaml`: legacy Cosign signatures (v2 and v3), root CA,
+   transparency log disabled
+1. `kyverno-policy-bundle.yaml`: Sigstore bundles, inline trusted root
 
-Policies are applied at admission time and prevent unsigned pods from being
-created.
+`__TRUST__` in each is replaced with the flow's CA or trusted root by
+`kyverno/common.mk`. Each flow signs elsewhere, relocates into the Kind
+registry, and asserts unsigned is denied and signed is admitted and running.
 
 ### Runtime Verification
 
@@ -279,7 +312,8 @@ created.
 - This is the official/recommended approach since PR #8515 (Apr 2025)
 - Verifier binary in `/opt/containerd/image-verifier/bin/`
 - Config: `io.containerd.image-verifier.v1.bindir` plugin
-- Calls `cosign verify` with BYO-PKI certificates
+- Calls `cosign verify` with BYO-PKI certificates: a root CA PEM for legacy
+  signatures, or a trusted root `.json` for bundles
 - **Limitation**: Only verifies on registry pulls (cached images bypass)
 - Requires VM with containerd 2.1+ runtime
 
@@ -295,8 +329,14 @@ Different ports are used to avoid conflicts:
 - `127.0.0.1:5000` - Containerd test registry
 - `127.0.0.1:5001` - Kyverno Kind registry
 - `127.0.0.1:5002` - Notation test registry
-- `127.0.0.1:5003` - CRI-O test registry / Cosign test registry
+- `127.0.0.1:5003` - CRI-O test registry / Cosign v2 test registry
 - `127.0.0.1:5004` - Cosign v4-pre test registry (registry:3)
+- `127.0.0.1:5005` - Oras standalone destination registry
+- `127.0.0.1:5006` - Cosign v4-pre timestamp authority
+- `127.0.0.1:5007` - Cosign v3 test registry
+- `127.0.0.1:5008` - Cosign v4-pre zot registry (OCI referrers API)
+- `127.0.0.1:5009` - Kyverno Kind zot registry (`kind-zot`)
+- `127.0.0.1:5012` - Cosign v4-pre TLS registry (registry:3, https only)
 
 ### Certificate Generation
 
@@ -368,14 +408,17 @@ Each component has its own test cycle:
 - Pods/containers with **signed images**: Should start successfully
 - Pods/containers with **unsigned images**: Should fail with signature
   verification errors
-- In Kyverno tests: Look for pods with `success` in name (should exist), pods
-  with `fail` in name (should NOT exist)
+- Kyverno flows assert this themselves and exit non-zero otherwise
 
 ### Kind Cluster Notes
 
-Due to Kind cluster networking issues, pods may show `ImagePullErr` but this is
-expected. The important metric is whether the pod was created (admission passed)
-or rejected (admission failed).
+Workloads and Kyverno reach the registry by its kind network IP, mapped to
+plain http in containerd (`kyverno/scripts/kind-cluster.sh`). Kyverno's bundle
+referrer fetch ignores `--allowInsecureRegistry` and only falls back to http
+for private IPs, so a container name does not work for bundles.
+
+All kubectl and helm calls use `--context kind-kyverno`; never rely on the
+current context, other Kind clusters may share the machine.
 
 ## File Structure
 
@@ -389,7 +432,7 @@ or rejected (admission failed).
 ├── cosign-v4-pre/         # Cosign v4-pre (v0.3 bundles only, registry:3)
 ├── oras/                  # Oras signature copying (shell)
 ├── kyverno/               # Kyverno admission controller policies
-│   ├── policy/            # ClusterPolicy YAML files
+│   ├── policy/            # ImageValidatingPolicy YAML files
 │   └── scripts/           # Kind cluster setup
 ├── crio/                  # CRI-O runtime verification POC
 │   ├── config/            # Policy.json and registry configs

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# create certificates in the examples dir
+# Create root CA -> intermediate CA -> leaf in OUTPUT_DIR (default examples).
+# LEAF_KEY selects the leaf key: ec (P-384, default) or rsa (RSA 4096).
 
 set -eu
 
-# Create directories
-OUTPUT_DIR=examples
+OUTPUT_DIR="${OUTPUT_DIR:-examples}"
+LEAF_KEY="${LEAF_KEY:-ec}"
 mkdir -p "${OUTPUT_DIR}"
 
 # Setup CA files
@@ -14,7 +15,6 @@ echo 1000 > "${OUTPUT_DIR}"/subca-serial
 
 # Generate Root CA key - we can use whatever, only signature algos matter
 # in our use-case
-# openssl genrsa -out "${OUTPUT_DIR}"/ca.key 4096
 openssl ecparam -name secp384r1 -genkey -noout -out "${OUTPUT_DIR}"/ca.key
 
 # Create Root CA config
@@ -36,11 +36,11 @@ subjectKeyIdentifier = hash
 default_ca = CA_default
 
 [CA_default]
-database = examples/index
-serial = examples/serial
-private_key = examples/ca.key
-certificate = examples/ca.crt
-new_certs_dir = examples
+database = ${OUTPUT_DIR}/index
+serial = ${OUTPUT_DIR}/serial
+private_key = ${OUTPUT_DIR}/ca.key
+certificate = ${OUTPUT_DIR}/ca.crt
+new_certs_dir = ${OUTPUT_DIR}
 default_days = 3650
 default_md = sha256
 policy = policy_match
@@ -72,11 +72,11 @@ keyUsage = critical,keyCertSign,cRLSign
 default_ca = CA_default
 
 [CA_default]
-database = examples/index
-serial = examples/subca-serial
-private_key = examples/sub-ca.key
-certificate = examples/sub-ca.crt
-new_certs_dir = examples
+database = ${OUTPUT_DIR}/index
+serial = ${OUTPUT_DIR}/subca-serial
+private_key = ${OUTPUT_DIR}/sub-ca.key
+certificate = ${OUTPUT_DIR}/sub-ca.crt
+new_certs_dir = ${OUTPUT_DIR}
 default_days = 1875
 default_md = sha256
 policy = policy_match
@@ -118,9 +118,12 @@ subjectAltName = @alt_names
 URI.0 = https://signing.example.com
 EOF
 
-# Generate leaf key - whatever is fine
-# openssl genrsa -out "${OUTPUT_DIR}"/leaf.key 4096
-openssl ecparam -name secp384r1 -genkey -noout -out "${OUTPUT_DIR}"/leaf.key
+# Generate leaf key
+case "${LEAF_KEY}" in
+    ec) openssl ecparam -name secp384r1 -genkey -noout -out "${OUTPUT_DIR}"/leaf.key ;;
+    rsa) openssl genrsa -out "${OUTPUT_DIR}"/leaf.key 4096 ;;
+    *) echo "error: LEAF_KEY must be ec or rsa" >&2; exit 1 ;;
+esac
 
 # Generate leaf CSR
 openssl req -new -key "${OUTPUT_DIR}"/leaf.key \

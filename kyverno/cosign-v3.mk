@@ -4,7 +4,7 @@ FLOW := cosign-v3
 COSIGN_DIR := ../cosign-v3
 POLICY := kyverno-policy-cosign.yaml
 POLICY_NAME := check-image-cosign
-CA_CERT := $(COSIGN_DIR)/examples/ca.crt
+TRUST := $(COSIGN_DIR)/examples/ca.crt
 IMAGE_UNSIGNED := alpine:3.20.2
 # cosign-v3 load appends -loaded to the tag it loads into
 IMAGE_SIGNED := alpine:3.20.3-loaded

@@ -38,6 +38,8 @@ This means:
 - Cached images bypass verification
 - Pre-loaded images run without checks
 - `ctr image import` bypasses verification
+- The CRI local pull path, `use_local_image_pull = true`, bypasses it too
+  (test 12)
 
 **For production:** Use admission controllers (Kyverno, Ratify) as primary
 control. Transfer Service is defense-in-depth only.
@@ -120,15 +122,57 @@ REGISTRY_POLICY_GCR=gcr\.io|BLOCK
 VERIFY_DEFAULT_ACTION=allow
 ```
 
-Policy enforces **4 scenarios** (same as CRI-O):
+Policy enforces **6 scenarios**:
 
-- `127.0.0.1:5000`: VERIFY with BYO-PKI
+- `127.0.0.1:5000`: VERIFY legacy signatures with BYO-PKI
+- `127.0.0.1:5002`: VERIFY Sigstore bundles against a trusted root
+- `127.0.0.1:5004`: VERIFY Sigstore bundles from `../cosign-v4-pre`
 - `127.0.0.1:5001`: ALLOW without verification
 - `gcr.io`: BLOCK
 - Default: ALLOW
 
 Verifier is a bash script that validates signatures using
 [sigstore/cosign](https://github.com/sigstore/cosign).
+
+The trust path in a policy is either a root CA PEM, verifying legacy attached
+signatures, or a Sigstore trusted root `.json`, verifying bundles (the only
+format in cosign v4, see [../cosign-v4-pre](../cosign-v4-pre/README.md)):
+
+```bash
+REGISTRY_POLICY_BUNDLE=127\.0\.0\.1:5002|/etc/containerd/certs/registry-bundle-trusted-root.json
+```
+
+`make test` signs `127.0.0.1:5002/alpine:3.20.3` into a bundle the way cosign
+v4 does (leaf plus intermediate in the bundle, root in the trusted root) and
+asserts the signed pod runs and an unsigned one is blocked by the verifier.
+
+It also runs `../cosign-v4-pre` `v4-multiarch` in the VM, which publishes on
+`127.0.0.1:5004` the production shape signed without cosign (RSA 4096 leaf,
+leaf-only bundle, signed timestamp) and two multi-arch copies, and installs
+its trusted root for that registry. Every image is removed from the node
+first, so each pod pulls, and each test requires the verifier's log line for
+the expected digest:
+
+| Test | Image | Result |
+| -- | -- | -- |
+| 7 | production shape, relocated | runs, `PASSED` |
+| 8 | index signed on the index, by tag | runs, `PASSED` on the index digest |
+| 9 | index signed on the platform manifests, by tag | blocked, `no signatures found` on the index digest |
+| 10 | index signed on the index, by linux/amd64 digest | blocked, `no signatures found` on the platform digest |
+| 11 | index signed on the platform manifests, by linux/amd64 digest | runs, `PASSED` on the platform digest |
+| 12 | unsigned, `use_local_image_pull = true` | runs, verifier never invoked |
+
+The verifier checks the digest containerd passes: the index for a tag, the
+platform manifest for a platform digest. A bundle on the index alone covers
+pulls by tag, not by platform digest, as in Kyverno
+(`../kyverno/bundle-multiarch.mk`).
+
+Test 12 is the local pull path, which a node that decrypts images needs:
+with `use_local_image_pull = true` the CRI pulls without the Transfer
+Service, so an unsigned image from a registry whose policy requires a bundle
+runs, and the verifier logs nothing. `container-encryption-poc` asserts that
+containerd decrypts only on the local pull path, so on one node image
+verification and decryption exclude each other.
 
 ## Testing
 

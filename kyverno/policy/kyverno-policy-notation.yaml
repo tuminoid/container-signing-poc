@@ -1,5 +1,5 @@
-# Notation signatures against a private CA. The PEM block is replaced by the
-# flow's CA, see common.mk.
+# Notation signatures against a private CA. __TRUST__ becomes the root CA,
+# see common.mk.
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
@@ -16,15 +16,13 @@ spec:
       operations: ["CREATE", "UPDATE"]
       resources: ["pods"]
   matchImageReferences:
-  - glob: "kind-registry:5000/busybox*"
+  - glob: "*:5000/busybox*"
   attestors:
   - name: notary
     notary:
       certs:
         value: |-
-          -----BEGIN CERTIFICATE-----
-          replaced with the root CA certificate
-          -----END CERTIFICATE-----
+          __TRUST__
   validations:
   - expression: >-
       images.containers.map(image,

@@ -1,0 +1,44 @@
+# Sigstore bundles (cosign-v4-pre) against a private CA, with no transparency
+# log. __TRUST__ becomes the trusted root holding the CA chain and the
+# timestamp authority. The bundle must carry the leaf only and a signed
+# timestamp, see ../cosign-v4-pre/README.md. __DIGEST__ is DIGEST from
+# common.mk: true keeps Kyverno's defaults, false admits tag references as
+# they are.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: check-image-bundle
+spec:
+  validationActions: [Deny]
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 30
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods"]
+  matchImageReferences:
+  - glob: "*:5000/bundle/*"
+  validationConfigurations:
+    mutateDigest: __DIGEST__
+    verifyDigest: __DIGEST__
+  attestors:
+  - name: cosign
+    cosign:
+      ctlog:
+        insecureIgnoreTlog: true
+        insecureIgnoreSCT: true
+      keyless:
+        identities:
+        - subjectRegExp: ".*"
+          issuerRegExp: ".*"
+      trustedRoot:
+        value: |-
+          __TRUST__
+  validations:
+  - expression: >-
+      images.containers.map(image,
+      verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
+    message: image is not signed by the configured CA

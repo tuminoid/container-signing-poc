@@ -5,7 +5,7 @@ FLOW := notation
 NOTATION_DIR := ../notation
 POLICY := kyverno-policy-notation.yaml
 POLICY_NAME := check-image-notation
-CA_CERT := $(NOTATION_DIR)/examples/ca.crt
+TRUST := $(NOTATION_DIR)/examples/ca.crt
 IMAGE_UNSIGNED := busybox:1.36.0-glibc
 IMAGE_SIGNED := busybox:1.36.1-glibc
 

@@ -1,0 +1,36 @@
+# The ClusterPolicy this repository ran for legacy Cosign signatures before
+# Kyverno 1.20, with its digest settings spelled out. kyverno-policy-cosign.yaml
+# replaces it, see README.md for the mapping. Only applied by
+# `make api-versions`, which asserts that Kyverno 1.20 refuses it.
+apiVersion: kyverno.io/v2beta1
+kind: ClusterPolicy
+metadata:
+  name: check-image-cosign-legacy
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+  - name: verify-signature-cosign
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    verifyImages:
+    - type: Cosign
+      imageReferences:
+      - "*:5000/alpine*"
+      mutateDigest: true
+      verifyDigest: true
+      required: true
+      attestors:
+      - count: 1
+        entries:
+        - certificates:
+            rekor:
+              ignoreTlog: true
+            ctlog:
+              ignoreSCT: true
+            certChain: |-
+              __TRUST__

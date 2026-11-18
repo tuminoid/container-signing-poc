@@ -2,6 +2,12 @@
 
 # Cosign POC
 
+> **Cosign v4:** this flow uses `cosign generate` and `cosign attach signature`,
+> both removed on cosign `main` (`attach` is replaced by bundle-only `attach
+> bundle`). Run it with cosign v3.1.x or older via `COSIGN_BIN`. Verifying
+> already attached legacy signatures still works on `main`. For the v4 path see
+> [../cosign-v4-pre](../cosign-v4-pre/README.md).
+
 This POC aims to provide a Proof-of-Concept for using cosign to sign/verify
 container images using external signing service.
 

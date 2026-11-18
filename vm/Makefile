@@ -2,7 +2,7 @@
 # setup installs system packages and needs a reboot. Host needs qemu-system-x86,
 # qemu-utils, cloud-image-utils and /dev/kvm; no root.
 #
-#   make crio | containerd     # VM up, copy dir, setup, reboot, test
+#   make crio | containerd     # VM up, copy dir and ../cosign-v4-pre, setup, reboot, test
 #   make stop-crio | stop-containerd
 #   make clean                 # stop both, delete build/vm
 
@@ -37,9 +37,14 @@ $(IMAGE):
 
 crio containerd: check-tools $(IMAGE)
 	$(call VM,$@) start
-	$(call VM,$@) ssh 'cloud-init status --wait >/dev/null; command -v make >/dev/null || \
-		{ sudo apt-get update -qq && sudo apt-get install -y -qq make; }'
-	tar -C .. -cf - $@ | $(call VM,$@) ssh 'tar -xf - -C ~'
+	@# A fresh image runs apt-daily and unattended-upgrades at boot, which take
+	@# the apt locks setup needs: stop their timers, wait out a running one.
+	$(call VM,$@) ssh 'cloud-init status --wait >/dev/null; \
+		sudo systemctl disable --now -q apt-daily.timer apt-daily-upgrade.timer; \
+		while [ -n "$$(systemctl list-units --no-legend --state=activating,active \
+			apt-daily.service apt-daily-upgrade.service)" ]; do sleep 5; done; \
+		command -v make >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq make; }'
+	tar -C .. --exclude=cosign-v4-pre/examples -cf - $@ cosign-v4-pre | $(call VM,$@) ssh 'tar -xf - -C ~'
 	$(call VM,$@) ssh 'cd ~/$@ && make setup'
 	-$(call VM,$@) ssh 'sudo reboot'
 	sleep 15

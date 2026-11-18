@@ -25,6 +25,8 @@ chmod +x "${VERIFIER_BIN_DIR}/verifier"
 echo "Installing CA certificates..."
 mkdir -p "${CA_CERT_DIR}"
 cp "${SCRIPT_DIR}/../examples/ca.crt" "${CA_CERT_DIR}/registry-primary-ca.crt"
+cp "${SCRIPT_DIR}/../examples/trusted-root.json" "${CA_CERT_DIR}/registry-bundle-trusted-root.json"
+cp "${SCRIPT_DIR}/../../cosign-v4-pre/examples/trusted-root-tsa.json" "${CA_CERT_DIR}/registry-v4-trusted-root.json"
 
 # Install containerd config from template
 echo "Installing containerd configuration from template..."
@@ -44,6 +46,12 @@ cat > /etc/containerd/image-verifier.conf <<'CONFEOF'
 
 # Primary registry (127.0.0.1:5000) - REQUIRE signature verification
 REGISTRY_POLICY_PRIMARY=127\.0\.0\.1:5000|/etc/containerd/certs/registry-primary-ca.crt
+
+# Bundle registry (127.0.0.1:5002) - REQUIRE a Sigstore bundle, trusted root
+REGISTRY_POLICY_BUNDLE=127\.0\.0\.1:5002|/etc/containerd/certs/registry-bundle-trusted-root.json
+
+# ../cosign-v4-pre registry (127.0.0.1:5004) - REQUIRE a bundle, CA chain and TSA in the trusted root
+REGISTRY_POLICY_V4=127\.0\.0\.1:5004|/etc/containerd/certs/registry-v4-trusted-root.json
 
 # Secondary registry (127.0.0.1:5001) - ALLOW without verification
 REGISTRY_POLICY_SECONDARY=127\.0\.0\.1:5001|ALLOW

@@ -123,8 +123,8 @@ Basically, the POC is finding the following:
    of the interface, even manual/email works (despite being brittle), without
    writing a full-fledged plugin with Go.
 1. Notation can handle SHA512 with PSS, no problem
-1. Kyverno can easily be configured to verify Notation signatures runtime, via
-   their admission controller and pluggable policies.
+1. Kyverno verifies Notation signatures at admission with an
+   `ImageValidatingPolicy`.
 1. Oras can be used to move containers and signatures from CI to production
 
 ### Cosign
@@ -143,32 +143,39 @@ Basically, the POC is finding the following:
    homogeneous across its services. The v4-pre POC signs with ECDSA P-384 and
    SHA-384, so the earlier claim that only SHA-256 with RSA PKCS#1 works was
    wrong.
-1. Kyverno can be used with Cosign the same as Notation, just a little bit more
-   configuration needed in the manifest to disable transparency logs and SCTs.
+1. Kyverno verifies legacy Cosign signatures the same way as Notation, with
+   transparency log and SCT checks disabled in the policy.
+1. Kyverno 1.20 rejects and no longer runs `kyverno.io` `ClusterPolicy`; all
+   policies here are `policies.kyverno.io/v1` `ImageValidatingPolicy`.
 
 ### Cosign v4-pre (new bundle format only)
 
 Anticipating cosign v4, where Sigstore bundles (v0.3+) become the only format
-and the legacy `cosign attach` path is removed:
+and the legacy `cosign attach` path is removed. Each finding names the target
+that asserts it; `make cosign-v4-pre` runs them all.
 
-1. Signing with a private PKI works: the bundle can carry leaf + intermediate
-   while the root is supplied separately as the trust anchor. This is
-   [cosign#3976](https://github.com/sigstore/cosign/issues/3976), which is
-   fixed on the bundle codepath as of cosign 3.1.3, but still broken on the
-   legacy path.
-1. Verification requires `--allow-certificate-chain`. Without it cosign
-   silently falls back to the legacy path and reports the misleading
-   `no signatures found`.
-1. **External signing is possible, but not via `cosign attach`.** `cosign sign
-   --key` rejects raw PEM, but the key can stay out of cosign through a
-   `sigstore-kms-*` plugin (synchronous), `pkcs11:`, or a cloud KMS URI.
-   Alternatively the bundle can be built and published entirely without cosign,
-   signing the DSSE payload with openssl and publishing with `oras attach`; the
-   POC's `make v4-external-offline` demonstrates this asynchronous flow.
-1. **Bundles cannot be relocated with `cosign save`/`load`**, which only writes
-   the image. `cosign copy` is deprecated and points at `oras copy -r` instead,
-   so Oras becomes necessary again for signature transport.
-1. Requires registry:3 (or another OCI 1.1 registry) for referrers support.
+| Finding | Asserted by |
+| -- | -- |
+| Signing with a private PKI works: the bundle carries leaf + intermediate while the trust anchor is the root alone. [cosign#3976](https://github.com/sigstore/cosign/issues/3976) is fixed on the bundle codepath as of cosign 3.1.3; the legacy path is still affected | `cosign-v4-pre` `test`; `cosign-v3` `repro-3976-legacy` |
+| Verification requires `--allow-certificate-chain`; without it cosign falls back to the legacy path and reports `no signatures found` | `cosign-v4-pre` `test` |
+| External signing works without `cosign attach`: a `sigstore-kms-*` plugin keeps the key from cosign, or the bundle is built and published entirely without cosign (openssl plus `oras attach`), asynchronously | `cosign-v4-pre` `v4-external-plugin`, `v4-external-offline` |
+| The production algorithm, an RSA 4096 leaf with PKCS#1 v1.5 and SHA-256 and a URI SAN, works end to end without cosign at signing time: timestamp, bundle, relocation, Kyverno, containerd verifier | `cosign-v4-pre` `v4-rsa`; `kyverno` `cosign-v4-pre.mk SIGN_TARGET=v4-rsa`; `containerd` test 7 |
+| Kyverno admits a private-PKI bundle in one shape only: leaf alone, intermediate in the trusted root, RFC 3161 timestamp. Leaf plus intermediate is denied with `no signatures found`, a leaf without timestamp with `threshold not met for verified signed timestamps` | `kyverno` `cosign-v4-pre.mk`, `bundle-shapes.mk` |
+| With `mutateDigest` and `verifyDigest` off Kyverno admits a tag reference unchanged; by default it rewrites it to `tag@digest` | `kyverno` `cosign-v4-pre.mk DIGEST=false` |
+| Bundles relocate with `oras cp -r` through an OCI layout tarball. `cosign save` and `load` carry them too, in a layout only `cosign load` reads | `cosign-v4-pre` `v4-relocate`, `v4-save-load` |
+| On `registry:3` bundles are found through the fallback tag, on zot through the referrers API; signing, verification, relocation and admission work on both | `cosign-v4-pre` `v4-referrers`; `kyverno` `bundle-zot.mk` |
+| A development bundle next to the production one is harmless: a trusted root without the development CA admits on the production bundle. Deleting it before export, or signing in a clean promotion repository, leaves the production bundle alone | `cosign-v4-pre` `v4-dev-signatures`; `kyverno` `bundle-dev.mk` |
+| One trusted root holds two CA generations with validity windows; dropping one, or closing its window, fails its signatures | `cosign-v4-pre` `v4-rotation` |
+| A timestamped bundle outlives its leaf: after the leaf expires it still verifies and Kyverno admits it; an untimestamped bundle fails | `cosign-v4-pre` `v4-leaf-expiry`; `kyverno` `bundle-expiry.mk` |
+| A bundle covers one digest. On a multi-arch image, a bundle on the index admits pulls by tag, not by platform digest, in Kyverno and in the containerd verifier alike; sign the index and the platform manifests | `cosign-v4-pre` `v4-multiarch`; `kyverno` `bundle-multiarch.mk`; `containerd` tests 8 to 11 |
+| The containerd verifier, a `cosign verify` wrapper, verifies bundles against a trusted root, but is skipped on the CRI local pull path, `use_local_image_pull = true`, that a decrypting node needs | `containerd` tests 5 to 7, 12 |
+| CRI-O cannot verify a bundle-only image through `policy.json` ([container-libs#388](https://github.com/podman-container-tools/container-libs/issues/388)) | `crio` test 5 |
+| The signing certificate needs an email or URI SAN: cosign 3.x takes identities from SANs only | `cosign-v4-pre` `v4-san-required` |
+| Kyverno 1.20 refuses to create a `ClusterPolicy`; `ImageValidatingPolicy` `v1` and `v1beta1` are interchangeable | `kyverno` `api-versions` |
+| `sign-offline.sh` is the cosign-free signing entry point for other repositories: any image by digest, registry and key material, from any directory; its interface is in [cosign-v4-pre](cosign-v4-pre/README.md) | `crio` `sign-image-bundle-only`, with the CRI-O PKI from that directory; `cosign-v4-pre` `v4-tls` on a TLS registry; every bundle target with its own material |
+| Cosign main removes `cosign attach signature`, so the legacy external-signer flow fails there | `make tripwire-cosign-main` |
+
+Registries other than the local `registry:3` and zot are not covered.
 
 ## Runtime-Level Verification
 
@@ -181,31 +188,24 @@ local disk, which is not ideal either.
 
 ## e2e test
 
-End-to-end test for this POC can be run with `make notation`, `make cosign-v2`,
-or `make cosign-v3` from this directory.
+Run from this directory: `make notation`, `make cosign-v2`, `make cosign-v3`,
+`make cosign-v4-pre`, then `make clean`. `make tripwire-cosign-main` builds
+cosign main at a pinned commit, into `build/`, and needs Go.
 
-This will setup Kyverno in Kind cluster, install required Kyverno ClusterPolicies
-and sign images, then try run them. Only pods with proper signatures will run
-and the ones without signature will fail. Same is done for deployments, to
-verify that as well.
-
-Note: Due to issues with Kind cluster setup, pods do not end up running, but
-will show `ImagePullErr`. This is OK. As long as only pods with `success` in
-their name are created, POC is success. If no pods are created, or pods with
-`fail` in their name are created, then it is a failure.
-
-`make cosign-v4-pre` runs standalone, without Kyverno: bundle verification in
-Kyverno is unverified, and bundles have no working relocation path, so it is
-not part of the flows above.
+Each signs in a build registry, relocates the image with its signatures into
+the Kind registry, applies the Kyverno policy, and fails unless the unsigned
+pod and deployment are denied and the signed ones are admitted and running.
+`make cosign-v4-pre` also runs the bundle signing flows standalone and every
+bundle Kyverno flow. See [kyverno/README.md](kyverno/README.md).
 
 ### CRI-O and containerd e2e tests
 
 These install and configure container runtimes system-wide, so they run in
 disposable QEMU VMs: `make -C vm crio` and `make -C vm containerd` start an
-Ubuntu 24.04 VM, copy the directory in, run `make setup`, reboot, and run
-`make test`. No root on the host; state is under `build/vm`, removed by
-`make -C vm clean`. On an existing VM, run `make setup`, reboot, `make test`
-in the directory.
+Ubuntu 24.04 VM, copy the directory and `cosign-v4-pre` in, run `make setup`,
+reboot, and run `make test`. No root on the host; state is under `build/vm`,
+removed by `make -C vm clean`. On an existing VM, run `make setup`, reboot,
+`make test` in the directory.
 
 ## Notes
 
@@ -228,18 +228,18 @@ design aspect was not part of the audit based on the findings.
 
 ### Notes on Kyverno
 
-[Kyverno Image Signature verification](https://kyverno.io/docs/writing-policies/verify-images/)
-is no longer in beta in v1.13.0 onwards.
-
-Kyverno can also verify Sigstore Cosign signatures.
+Kyverno 1.20 verifies images only through `ImageValidatingPolicy`
+(`policies.kyverno.io`); the legacy `verifyImages` rules in `ClusterPolicy` are
+no longer executed. It verifies both Notation and Cosign signatures.
 
 Kyverno is generic policy engine, capable of replacing OPA Gatekeeper etc.
 
 ### Notes on Oras
 
-Oras can handle any OCI binary or blob perfectly fine. With Cosign, using Oras
-is not necessary as cosign CLI can load/save OCI containers identically to
-Oras, which includes handling Cosign signatures attached to images.
+Oras can handle any OCI binary or blob perfectly fine. For legacy Cosign
+signatures `cosign save`/`load` is enough. They carry Sigstore bundles too,
+but in a layout only `cosign load` reads; `oras cp -r` moves bundles through a
+standard OCI layout, so Oras is the transport for bundles here.
 
 ### Notes on Cosign
 

@@ -8,7 +8,9 @@ OUTPUT_DIR=examples
 mkdir -p "${OUTPUT_DIR}"
 
 # Setup CA files
-touch "${OUTPUT_DIR}"/index
+# Truncated, not kept: each run makes a new CA, which would refuse to issue
+# a subject the previous run already has in the database
+: > "${OUTPUT_DIR}"/index
 echo 1000 > "${OUTPUT_DIR}"/serial
 echo 1000 > "${OUTPUT_DIR}"/subca-serial
 

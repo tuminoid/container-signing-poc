@@ -7,7 +7,7 @@ TEST_IMAGE := alpine:3.20.3
 EXAMPLES_DIR := examples
 CERT_SCRIPT := ./scripts/gencrt.sh
 
-.PHONY: help setup run test clean status check-vm gen-certs sign-image setup-registry install-policy verify
+.PHONY: help setup run test clean status check-vm gen-certs sign-image setup-registry install-policy verify sign-image-bundle-only
 
 help:
 	@echo "CRI-O BYO-PKI Signature Verification"
@@ -131,6 +131,29 @@ install-policy:
 	@echo "==> Installing policy (requires root)..."
 	@sudo ./scripts/install-policy.sh
 
+# Tripwire: a Sigstore bundle alone, signed without cosign by
+# ../cosign-v4-pre/sign-offline.sh with this directory's PKI, on
+# 127.0.0.1:5003/bundle-only. cosign verifies it against the root CA; CRI-O,
+# reading legacy signatures only, must refuse it (test-verification.sh).
+# Every run adds a bundle, which changes neither result.
+BUNDLE_ONLY := $(TEST_REGISTRY_PRIMARY)/bundle-only
+
+sign-image-bundle-only: setup-registry gen-certs
+	docker pull -q $(TEST_IMAGE) >/dev/null
+	docker tag $(TEST_IMAGE) $(BUNDLE_ONLY):3.20.3
+	docker push -q $(BUNDLE_ONLY):3.20.3 >/dev/null
+	cosign trusted-root create \
+		--fulcio="url=https://private.local,certificate-chain=$(EXAMPLES_DIR)/ca.crt" \
+		--out=$(EXAMPLES_DIR)/trusted-root.json
+	ref=$(BUNDLE_ONLY)@$$(oras resolve --plain-http $(BUNDLE_ONLY):3.20.3); \
+	INTERMEDIATE=$(CURDIR)/$(EXAMPLES_DIR)/sub-ca.crt KEY=$(CURDIR)/$(EXAMPLES_DIR)/leaf.key \
+		LEAF=$(CURDIR)/$(EXAMPLES_DIR)/leaf.crt WORK_DIR=$(CURDIR)/$(EXAMPLES_DIR)/bundle-only \
+		../cosign-v4-pre/sign-offline.sh "$$ref" && \
+	cosign verify --allow-certificate-chain --trusted-root=$(EXAMPLES_DIR)/trusted-root.json \
+		--certificate-identity-regexp '.*' --certificate-oidc-issuer-regexp '.*' \
+		--insecure-ignore-tlog --insecure-ignore-sct "$$ref" >/dev/null
+	@echo "OK: bundle-only image signed, verified by cosign"
+
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
 	@cosign verify \
@@ -161,6 +184,7 @@ run: check-vm
 		$(MAKE) install-policy; \
 		echo ""; \
 	fi
+	$(MAKE) sign-image-bundle-only
 	@./scripts/test-verification.sh
 
 test: run

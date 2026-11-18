@@ -6,7 +6,9 @@
 # CONFIGURATION: /etc/containerd/image-verifier.conf
 #
 # Format (one policy per line):
-#   REGISTRY_POLICY_NAME=registry_pattern|ca_cert_path
+#   REGISTRY_POLICY_NAME=registry_pattern|trust_path
+#   trust_path is a root CA PEM (legacy signatures) or a Sigstore trusted
+#   root .json (bundles)
 #
 # Example:
 #   REGISTRY_POLICY_INTERNAL=registry.internal.corp:5000|/etc/containerd/certs/internal-ca.crt
@@ -71,8 +73,10 @@ fi
 
 log "===> VERIFIER CALLED: ${IMAGE_NAME}@${IMAGE_DIGEST}"
 
-# Construct full image reference
-IMAGE_REF="${IMAGE_NAME}@${IMAGE_DIGEST}"
+# Construct full image reference. For a pull by digest, as Kyverno's
+# mutateDigest makes every pull, the name already ends in @digest; verify the
+# digest containerd passes, once.
+IMAGE_REF="${IMAGE_NAME%@*}@${IMAGE_DIGEST}"
 
 # Default action for unknown registries (can be overridden via env var)
 DEFAULT_ACTION="${VERIFY_DEFAULT_ACTION:-allow}"
@@ -129,25 +133,30 @@ if [[ ! -f "${CA_CERT_PATH}" ]]; then
     exit 1
 fi
 
-log "Verifying signature with CA: ${CA_CERT_PATH}"
+log "Verifying signature with: ${CA_CERT_PATH}"
 
-# Verify with cosign using the registry-specific CA certificate
-# --new-bundle-format=false: Required for cosign v3 when using --ca-roots (BYO-PKI)
-# --ca-roots: Root CA certificate for verifying the signing certificate chain
-# --private-infrastructure: Skip transparency log and SCT verification (BYO-PKI)
-if cosign verify \
-    --new-bundle-format=false \
-    --ca-roots="${CA_CERT_PATH}" \
+# A .json trust file is a Sigstore trusted root: verify bundles (cosign v4
+# format, OCI referrers), with the chain either in the bundle or in the root.
+# Anything else is a root CA PEM: verify legacy attached signatures.
+if [[ "${CA_CERT_PATH}" == *.json ]]; then
+    VERIFY_ARGS=(--trusted-root="${CA_CERT_PATH}" --allow-certificate-chain
+        --insecure-ignore-tlog)
+else
+    VERIFY_ARGS=(--new-bundle-format=false --ca-roots="${CA_CERT_PATH}"
+        --private-infrastructure)
+fi
+
+if out="$(cosign verify \
+    "${VERIFY_ARGS[@]}" \
     --certificate-identity-regexp '.*' \
     --certificate-oidc-issuer-regexp '.*' \
-    --private-infrastructure \
     --insecure-ignore-sct=true \
-    "${IMAGE_REF}" > /dev/null 2>&1; then
+    "${IMAGE_REF}" 2>&1)"; then
 
     log "[OK] Signature verification PASSED for ${IMAGE_REF}"
     exit 0
 else
-    log "[FAIL] Signature verification FAILED for ${IMAGE_REF}"
+    log "[FAIL] Signature verification FAILED for ${IMAGE_REF}: $(tail -n 1 <<< "${out}")"
     echo "Image signature verification failed for ${IMAGE_NAME}"
     exit 1
 fi

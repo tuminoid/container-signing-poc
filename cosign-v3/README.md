@@ -2,7 +2,13 @@
 
 # Cosign v3 POC (BYO-PKI with v3 Binary)
 
-This POC demonstrates using Cosign v3.0.2 binary with BYO-PKI certificates
+> **Cosign v4:** this flow uses `cosign generate` and `cosign attach signature`,
+> both removed on cosign `main` (`attach` is replaced by bundle-only `attach
+> bundle`). Run it with cosign v3.1.x or older via `COSIGN_BIN`. Verifying
+> already attached legacy signatures still works on `main`. For the v4 path see
+> [../cosign-v4-pre](../cosign-v4-pre/README.md).
+
+This POC demonstrates using the Cosign v3 binary with BYO-PKI certificates
 for external signing. For BYO-PKI use cases (OpenSSL-generated keys), the
 workflow remains the same as v2, but using the v3 binary ensures compatibility
 with v3's internal signature handling and bundle format.
@@ -14,10 +20,12 @@ with v3's internal signature handling and bundle format.
 
 **Important Notes:**
 
-1. **BYO-PKI Constraint**: Cosign's native `cosign sign --key` command only
-   works with cosign-generated keys (via `cosign generate-key-pair`), not
-   BYO-PKI OpenSSL keys. For BYO-PKI, both v2 and v3 use the external signer
-   approach (`cosign generate` → OpenSSL sign → `cosign attach signature`).
+1. **BYO-PKI Constraint**: `cosign sign --key` rejects a plain PEM key. An
+   OpenSSL key must first go through `cosign import-key-pair`, see
+   [../cosign-v4-pre](../cosign-v4-pre/README.md); `sign-native` here uses a
+   cosign-generated key instead. The default flow keeps the key out of cosign
+   with the external signer approach (`cosign generate`, OpenSSL sign,
+   `cosign attach signature`).
 
 1. **Bundle Format**: Cosign v3.0+ defaults to `--new-bundle-format=true`,
    which requires `--trusted-root` instead of `--ca-roots`. For BYO-PKI with

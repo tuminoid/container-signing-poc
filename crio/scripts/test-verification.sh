@@ -94,6 +94,21 @@ else
 fi
 echo ""
 
+# Test 5, tripwire: a Sigstore bundle alone, which cosign verifies against the
+# same root CA (make sign-image-bundle-only). containers/image reads legacy
+# signatures only, so the pull fails as for an unsigned image.
+echo "==> Test 5: Pull bundle-only image (should fail, bundles are not read)"
+echo "   Image: 127.0.0.1:5003/bundle-only:3.20.3"
+if out="$(sudo crictl pull 127.0.0.1:5003/bundle-only:3.20.3 2>&1)"; then
+    fail "ERROR: Bundle-only image pull SUCCEEDED: CRI-O verified a Sigstore bundle"
+elif grep -q 'A signature was required, but no signature exists' <<< "${out}"; then
+    echo "[OK] OK: Bundle-only image pull FAILED: no signature CRI-O can read"
+else
+    fail "ERROR: Bundle-only image pull failed for another reason"
+    echo "${out}"
+fi
+echo ""
+
 # Test 3 & 4: Kubernetes pod tests (if k8s is available)
 if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
     # Ensure node is Ready before running pod tests

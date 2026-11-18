@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
+# Kind cluster plus two plain-http registries on the kind network. Rerunnable;
+# the registries start empty on every run.
+#
+# kind-registry is registry:3, which serves referrers through the fallback
+# tag; kind-zot is zot, which serves the referrers API. ZOT_IMAGE names its
+# image, ../../cosign-v4-pre/zot.json its configuration.
+#
+# Workloads and Kyverno reference a registry by its kind network IP:
+# Kyverno fetches Sigstore bundle referrers without honouring
+# --allowInsecureRegistry, and go-containerregistry only falls back to http for
+# localhost and private IPs, not for a container name.
 
 set -eux
 
-# 1. Registry container config unless it already exists
-REG_NAME="kind-registry"
-REG_PORT="5001"
+CLUSTER="kyverno"
+ZOT_IMAGE="${ZOT_IMAGE:?ZOT_IMAGE}"
+ZOT_CONFIG="$(cd "$(dirname "$0")/../../cosign-v4-pre" && pwd)/zot.json"
 
-# 2. Create kind cluster with containerd registry config dir enabled
-# TODO: kind will eventually enable this by default and this patch will
-# be unnecessary.
-#
-# See:
-# https://github.com/kubernetes-sigs/kind/issues/2875
-# https://github.com/containerd/containerd/blob/main/docs/cri/config.md#registry-configuration
-# See: https://github.com/containerd/containerd/blob/main/docs/hosts.md
-cat <<EOF | kind create cluster --name=kyverno --config=-
+# kind create and kind export switch the current context; everything here uses
+# --context, so put back whatever the user had
+PREV_CONTEXT="$(kubectl config current-context 2>/dev/null || true)"
+if ! kind get clusters | grep -qx "${CLUSTER}"; then
+    # containerd reads per-registry config from certs.d
+    cat <<EOF | kind create cluster --name="${CLUSTER}" --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 containerdConfigPatches:
@@ -22,29 +30,38 @@ containerdConfigPatches:
     [plugins."io.containerd.grpc.v1.cri".registry]
         config_path = "/etc/containerd/certs.d"
 EOF
+elif ! kubectl config get-contexts -o name | grep -qx "kind-${CLUSTER}"; then
+    # the cluster runs, but its context left the kubeconfig, which another
+    # tool writing the same file can cause
+    kind export kubeconfig --name="${CLUSTER}"
+fi
+if [[ -n "${PREV_CONTEXT}" && "$(kubectl config current-context)" != "${PREV_CONTEXT}" ]]; then
+    kubectl config use-context "${PREV_CONTEXT}"
+fi
 
-# 3. Add the registry config to the nodes
-#
-# This is necessary because localhost resolves to loopback addresses that are
-# network-namespace local.
-# In other words: localhost in the container is not localhost on the host.
-#
-# We want a consistent name that works from both ends, so we tell containerd to
-# alias localhost:${REG_PORT} to the registry container when pulling images
-# Workloads reference ${REG_NAME}:5000, the name Kyverno also resolves from
-# inside the cluster, so map that over plain http too.
-for node in $(kind get nodes --name=kyverno); do
-    for host in "localhost:${REG_PORT}" "${REG_NAME}:5000"; do
-        docker exec "${node}" mkdir -p "/etc/containerd/certs.d/${host}"
-        cat <<EOF | docker exec -i "${node}" cp /dev/stdin "/etc/containerd/certs.d/${host}/hosts.toml"
-[host."http://${REG_NAME}:5000"]
-EOF
+# registry name port image-and-args...: start it afresh, so no referrer of an
+# earlier run survives, then pull from it over plain http under localhost:port
+# and its kind IP
+registry() {
+    local name="$1" port="$2" ip node host
+    shift 2
+    docker rm -f "${name}" >/dev/null 2>&1 || true
+    docker run -d -p "127.0.0.1:${port}:5000" --network kind --name "${name}" "$@"
+    ip="$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' "${name}")"
+    for node in $(kind get nodes --name="${CLUSTER}"); do
+        for host in "localhost:${port}" "${ip}:5000"; do
+            docker exec "${node}" mkdir -p "/etc/containerd/certs.d/${host}"
+            echo "[host.\"http://${ip}:5000\"]" | \
+                docker exec -i "${node}" cp /dev/stdin "/etc/containerd/certs.d/${host}/hosts.toml"
+        done
     done
-done
+}
 
-# 4. Document the local registry
+registry kind-registry 5001 registry:3
+registry kind-zot 5009 -v "${ZOT_CONFIG}:/etc/zot/config.json:ro" "${ZOT_IMAGE}"
+
 # https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
-cat <<EOF | kubectl apply -f -
+cat <<EOF | kubectl --context "kind-${CLUSTER}" apply -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -52,6 +69,6 @@ metadata:
     namespace: kube-public
 data:
     localRegistryHosting.v1: |
-        host: "localhost:${REG_PORT}"
+        host: "localhost:5001"
         help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
 EOF

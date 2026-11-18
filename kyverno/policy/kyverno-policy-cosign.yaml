@@ -1,6 +1,5 @@
 # Cosign legacy signatures (cosign-v2, cosign-v3) against a private CA, with
-# no transparency log. The PEM block is replaced by the flow's CA, see
-# common.mk.
+# no transparency log. __TRUST__ becomes the root CA, see common.mk.
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
@@ -17,7 +16,7 @@ spec:
       operations: ["CREATE", "UPDATE"]
       resources: ["pods"]
   matchImageReferences:
-  - glob: "kind-registry:5000/alpine*"
+  - glob: "*:5000/alpine*"
   attestors:
   - name: cosign
     cosign:
@@ -27,9 +26,7 @@ spec:
       certificate:
         certChain:
           value: |-
-            -----BEGIN CERTIFICATE-----
-            replaced with the root CA certificate
-            -----END CERTIFICATE-----
+            __TRUST__
   validations:
   - expression: >-
       images.containers.map(image,

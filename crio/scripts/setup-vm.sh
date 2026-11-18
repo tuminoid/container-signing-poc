@@ -110,6 +110,18 @@ chmod +x /usr/local/bin/cosign
 echo "   OK: cosign ${COSIGN_VERSION} installed"
 echo ""
 
+echo "==> Installing oras..."
+# For ../cosign-v4-pre/sign-offline.sh, publishing the bundle-only signature
+ORAS_VERSION="1.3.6"
+ORAS_SHA256="66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0"
+curl -fsSLo /tmp/oras.tar.gz \
+    "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+echo "${ORAS_SHA256}  /tmp/oras.tar.gz" | sha256sum -c --quiet
+tar -xzf /tmp/oras.tar.gz -C /usr/local/bin oras
+rm -f /tmp/oras.tar.gz
+echo "   OK: oras ${ORAS_VERSION} installed"
+echo ""
+
 echo "==> Installing docker (for local registry)..."
 # Add Docker's official GPG key
 install -m 0755 -d /etc/apt/keyrings
