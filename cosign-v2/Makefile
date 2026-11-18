@@ -27,9 +27,9 @@ all: check-tools
 	@echo "targets: test verify clean e2e clean-e2e verify-local e2e-local"
 
 check-tools:
-	@type -a docker &>/dev/null || echo "error: Install docker: https://docs.docker.com/engine/install/"
-	@type -a $(COSIGN_BIN) &>/dev/null || echo "error: Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/"
-	@type -a openssl &>/dev/null || echo "error: openssl missing"
+	@type -a docker &>/dev/null || { echo "error: Install docker: https://docs.docker.com/engine/install/"; exit 1; }
+	@type -a $(COSIGN_BIN) &>/dev/null || { echo "error: Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/"; exit 1; }
+	@type -a openssl &>/dev/null || { echo "error: openssl missing"; exit 1; }
 
 clean:
 	rm -rf $(EXAMPLES_DIR)/$(TEST_IMAGE)-image
@@ -39,6 +39,7 @@ clean:
 clean-e2e: clean
 
 registry:
+	docker rm -f $(TEST_REGISTRY_NAME) >/dev/null 2>&1 || true
 	docker run -d -p $(TEST_REGISTRY):5000 --name $(TEST_REGISTRY_NAME) $(TEST_REGISTRY_IMAGE)
 	docker pull $(TEST_IMAGE):$(TEST_IMAGE_TAG)@$(TEST_DIGEST)
 	docker tag $(TEST_IMAGE)@$(TEST_DIGEST) $(TEST_IMAGE_LOCAL)
@@ -48,7 +49,7 @@ certificates:
 	$(CERT_SCRIPT)
 
 test: check-tools registry certificates sign verify
-e2e: test save load
+e2e: test pack load
 
 sign:
 	$(COSIGN_BIN) generate "$(TEST_IMAGE_SIGN)" > $(EXAMPLES_DIR)/payload.json

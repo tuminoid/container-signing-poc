@@ -1,6 +1,6 @@
 # cosign v3 signing test (native cosign sign command)
 
-TEST_REGISTRY := 127.0.0.1:5003
+TEST_REGISTRY := 127.0.0.1:5007
 TEST_REGISTRY_NAME := cosign-v3-registry
 TEST_REGISTRY_IMAGE := registry:2
 TEST_IMAGE := alpine
@@ -27,10 +27,10 @@ all: check-tools
 	@echo "targets: test verify clean e2e verify-v2-sigs verify-local e2e-local test-local-image"
 
 check-tools:
-	@type -a docker &>/dev/null || echo "error: Install docker: https://docs.docker.com/engine/install/"
-	@type -a $(COSIGN_BIN) &>/dev/null || echo "error: Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/"
-	@type -a openssl &>/dev/null || echo "error: openssl missing"
-	@type -a jq &>/dev/null || echo "error: Install jq: https://jqlang.github.io/jq/download/"
+	@type -a docker &>/dev/null || { echo "error: Install docker: https://docs.docker.com/engine/install/"; exit 1; }
+	@type -a $(COSIGN_BIN) &>/dev/null || { echo "error: Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/"; exit 1; }
+	@type -a openssl &>/dev/null || { echo "error: openssl missing"; exit 1; }
+	@type -a jq &>/dev/null || { echo "error: Install jq: https://jqlang.github.io/jq/download/"; exit 1; }
 
 clean:
 	rm -rf $(EXAMPLES_DIR)/$(TEST_IMAGE)-image
@@ -40,6 +40,7 @@ clean:
 clean-e2e: clean
 
 registry:
+	docker rm -f $(TEST_REGISTRY_NAME) >/dev/null 2>&1 || true
 	docker run -d -p $(TEST_REGISTRY):5000 --name $(TEST_REGISTRY_NAME) $(TEST_REGISTRY_IMAGE)
 	docker pull $(TEST_IMAGE):$(TEST_IMAGE_TAG)@$(TEST_DIGEST)
 	docker tag $(TEST_IMAGE)@$(TEST_DIGEST) $(TEST_IMAGE_LOCAL)
@@ -49,7 +50,7 @@ certificates:
 	$(CERT_SCRIPT)
 
 test: check-tools registry certificates sign verify
-e2e: test save load
+e2e: test pack load
 
 sign:
 	@echo "==> Signing with cosign v3 (using external signer for BYO-PKI compatibility)..."
@@ -153,16 +154,12 @@ verify-local-native: save
 test-local-image: check-tools registry sign-native save verify-local-native clean
 	@echo "[OK] v3 bundle format + local image verification test completed"
 
+# cosign-v2 signs the same pushed digest in its own registry.
+V2_IMAGE_SIGN := 127.0.0.1:5003/$(TEST_IMAGE)@$(TEST_DIGEST_LOCAL)
+
 verify-v2-sigs:
 	@echo "==> Testing v3 cosign verifying v2 attached signatures..."
-	@echo "Setting up v2 environment..."
-	@make -C ../cosign-v2 clean
-	@make -C ../cosign-v2 registry certificates sign
-	@echo ""
-	@echo "==> Verifying v2 signatures with v3 cosign binary..."
-	@V2_REGISTRY=127.0.0.1:5003; \
-	V2_IMAGE=alpine:3.20.3; \
-	V2_DIGEST=$$(docker inspect --format='{{index .RepoDigests 0}}' $$V2_REGISTRY/$$V2_IMAGE | cut -d@ -f2); \
+	$(MAKE) -C ../cosign-v2 clean registry certificates sign
 	$(COSIGN_BIN) verify \
 		--new-bundle-format=false \
 		--ca-roots=../cosign-v2/examples/ca.crt \
@@ -170,10 +167,9 @@ verify-v2-sigs:
 		--certificate-oidc-issuer-regexp '.*' \
 		--private-infrastructure \
 		--insecure-ignore-sct \
-		$$V2_REGISTRY/alpine@$$V2_DIGEST
-	@echo ""
+		$(V2_IMAGE_SIGN)
 	@echo "[OK] v3 cosign successfully verified v2 attached signatures!"
-	@make -C ../cosign-v2 clean
+	$(MAKE) -C ../cosign-v2 clean
 
 # ---------------------------------------------------------------------------
 # Reproduction for sigstore/cosign#3976 on the LEGACY codepath:

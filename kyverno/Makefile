@@ -24,12 +24,13 @@ setup: check-tools setup-registry create-cluster install-kyverno
 	@echo "kyverno setup done!"
 
 check-tools:
-	@type -a helm &>/dev/null || echo "error: Install helm: https://helm.sh/docs/intro/install/"
-	@type -a docker &>/dev/null || echo "error: Install docker: https://docs.docker.com/engine/install/"
-	@type -a kind &>/dev/null || echo "error: Install kind: https://kind.sigs.k8s.io/docs/user/quick-start/"
-	@type -a notation &>/dev/null || echo "error: Install notation: https://notaryproject.dev/docs/user-guides/installation/cli/"
+	@type -a helm &>/dev/null || { echo "error: Install helm: https://helm.sh/docs/intro/install/"; exit 1; }
+	@type -a docker &>/dev/null || { echo "error: Install docker: https://docs.docker.com/engine/install/"; exit 1; }
+	@type -a kind &>/dev/null || { echo "error: Install kind: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
+	@type -a kubectl &>/dev/null || { echo "error: Install kubectl: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
 
 setup-registry:
+	docker rm -f $(TEST_REGISTRY_NAME) >/dev/null 2>&1 || true
 	docker run -d -p $(TEST_REGISTRY):5000 --network kind --name $(TEST_REGISTRY_NAME) $(TEST_REGISTRY_IMAGE)
 
 create-cluster:

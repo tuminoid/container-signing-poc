@@ -74,7 +74,7 @@ func sign(ctx context.Context, req *proto.GenerateSignatureRequest) (*proto.Gene
 	return &proto.GenerateSignatureResponse{
 		KeyID:            req.KeyID,
 		Signature:        sigBytes,
-		SigningAlgorithm: string(signatureAlgorithmString),
+		SigningAlgorithm: signatureAlgorithmString,
 		CertificateChain: rawCertChain,
 	}, nil
 }

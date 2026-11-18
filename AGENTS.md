@@ -320,13 +320,7 @@ Both CRI-O and Containerd POCs:
 
 ### Go Module
 
-The Notation plugin uses:
-
-- Go 1.20+
-- `github.com/notaryproject/notation-core-go v1.0.2`
-- `github.com/notaryproject/notation-go v1.1.0`
-
-To build: `cd notation && make build`
+Versions are in `notation/go.mod`. To build: `cd notation && make build`
 
 ## Important Constraints
 

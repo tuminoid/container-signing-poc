@@ -31,8 +31,8 @@ echo ""
 
 echo "==> Installing CRI-O..."
 # Requires CRI-O 1.34+ with containers/image v5.34.1+ for pki field (https://github.com/containers/image/pull/2557)
-CRIO_VERSION="v1.34"
-K8S_VERSION="1.32"
+CRIO_VERSION="v1.37"
+K8S_VERSION="1.37"
 
 # Create keyrings directory
 install -m 0755 -d /etc/apt/keyrings
@@ -69,7 +69,7 @@ fi
 echo ""
 
 echo "==> Installing cri-tools (crictl)..."
-CRICTL_VERSION="v1.30.0"
+CRICTL_VERSION="v1.37.0"
 wget -q "https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-linux-amd64.tar.gz"
 tar zxf "crictl-${CRICTL_VERSION}-linux-amd64.tar.gz" -C /usr/local/bin
 rm -f "crictl-${CRICTL_VERSION}-linux-amd64.tar.gz"
@@ -103,7 +103,7 @@ echo ""
 
 echo "==> Installing cosign..."
 # Cosign v3 - uses new bundle format by default
-COSIGN_VERSION="v3.0.2"
+COSIGN_VERSION="v3.1.4"
 wget -q "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
 mv cosign-linux-amd64 /usr/local/bin/cosign
 chmod +x /usr/local/bin/cosign

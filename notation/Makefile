@@ -13,8 +13,14 @@ TEST_IMAGE := busybox
 TEST_IMAGE_TAG := 1.36.1-glibc
 TEST_DIGEST := sha256:9bc27a72a82d22e54b4cc8bd7b99d3907a442869f77f075e0119104f2404953d
 TEST_IMAGE_LOCAL := $(TEST_REGISTRY)/$(TEST_IMAGE):$(TEST_IMAGE_TAG)
-TEST_DIGEST_LOCAL := sha256:28e01ab32c9dbcbaae96cf0d5b472f22e231d9e603811857b295e61197e40a9b
-TEST_IMAGE_SIGN := $(TEST_REGISTRY)/busybox@$(TEST_DIGEST_LOCAL)
+# The pushed manifest digest depends on the docker image store, so resolve it
+# from the registry after push.
+TEST_DIGEST_LOCAL = $(shell curl -sfI \
+	-H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+	-H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+	http://$(TEST_REGISTRY)/v2/$(TEST_IMAGE)/manifests/$(TEST_IMAGE_TAG) | \
+	awk 'tolower($$1) == "docker-content-digest:" {print $$2}' | tr -d '\r')
+TEST_IMAGE_SIGN = $(TEST_REGISTRY)/$(TEST_IMAGE)@$(TEST_DIGEST_LOCAL)
 
 SHELL := /bin/bash
 
@@ -24,8 +30,8 @@ all: check-tools
 	@echo "targets: build install test verify clean"
 
 check-tools:
-	@type -a docker &>/dev/null || echo "error: Install docker: https://docs.docker.com/engine/install/"
-	@type -a notation &>/dev/null || echo "error: Install notation: https://notaryproject.dev/docs/user-guides/installation/cli/"
+	@type -a docker &>/dev/null || { echo "error: Install docker: https://docs.docker.com/engine/install/"; exit 1; }
+	@type -a notation &>/dev/null || { echo "error: Install notation: https://notaryproject.dev/docs/user-guides/installation/cli/"; exit 1; }
 
 build:
 	rm -f "$(SRC_DIR)/$(SRC_BIN)"
@@ -38,13 +44,14 @@ install: build
 clean:
 	rm -f "$(SRC_DIR)/$(SRC_BIN)"
 	rm -rf "$(TGT_DIR)"
-	rm -f $(EXAMPLES_DIR)/*.{cer,crt,csr,key,pem}
-	docker rm -f $(TEST_REGISTRY_NAME)
+	rm -f $(EXAMPLES_DIR)/*.{cer,crt,csr,key,pem,srl}
+	docker rm -f $(TEST_REGISTRY_NAME) 2>/dev/null || true
 	-notation cert delete -s external -t ca --all -y
 
 clean-e2e: clean
 
 registry:
+	docker rm -f $(TEST_REGISTRY_NAME) >/dev/null 2>&1 || true
 	docker run -d -p $(TEST_REGISTRY):5000 --name $(TEST_REGISTRY_NAME) $(TEST_REGISTRY_IMAGE)
 	docker pull $(TEST_IMAGE):$(TEST_IMAGE_TAG)@$(TEST_DIGEST)
 	docker tag $(TEST_IMAGE)@$(TEST_DIGEST) $(TEST_IMAGE_LOCAL)
@@ -80,6 +87,7 @@ inspect:
 	notation inspect --insecure-registry $(TEST_IMAGE_SIGN)
 
 verify: inspect
+	-notation cert delete -s external -t ca --all -y
 	notation cert add -t ca -s external "$(EXAMPLES_DIR)/ca.crt"
 	notation policy import --force $(EXAMPLES_DIR)/trustpolicy.json
 	notation verify --insecure-registry -v $(TEST_IMAGE_SIGN)

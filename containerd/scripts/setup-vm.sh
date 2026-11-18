@@ -17,7 +17,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 HOSTNAME=$(hostname)
-K8S_VERSION="1.32"
+K8S_VERSION="1.37"
 
 echo "==> Installing dependencies..."
 apt-get update -qq
@@ -33,7 +33,7 @@ echo ""
 
 echo "==> Installing cosign..."
 # Cosign v3 - uses new bundle format by default
-COSIGN_VERSION="v3.0.2"
+COSIGN_VERSION="v3.1.4"
 wget -q "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
 mv cosign-linux-amd64 /usr/local/bin/cosign
 chmod +x /usr/local/bin/cosign

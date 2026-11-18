@@ -47,15 +47,15 @@ NOTE: all this is done by `make test`, this is just explaining what it does.
 
 1. Run local registry where we can upload images and signatures
 
-   Commonly, `docker run -d --restart=always -p 127.0.0.1:5003:5000 registry:2`
+   Commonly, `docker run -d --restart=always -p 127.0.0.1:5007:5000 registry:2`
    does the trick.
 
 1. Push public alpine image to a local registry for testing
 
    ```sh
    docker pull alpine:3.20.3
-   docker tag alpine:3.20.3 127.0.0.1:5003/alpine:3.20.3
-   docker push 127.0.0.1:5003/alpine:3.20.3
+   docker tag alpine:3.20.3 127.0.0.1:5007/alpine:3.20.3
+   docker push 127.0.0.1:5007/alpine:3.20.3
    ```
 
 1. Generate certificates for signing. We generate CA, sub-CA and leaf.
@@ -71,7 +71,7 @@ The workflow is the same as v2 for BYO-PKI compatibility:
 1. Generate payload
 
    ```sh
-   cosign generate 127.0.0.1:5003/alpine:3.20.3 > examples/payload.json
+   cosign generate 127.0.0.1:5007/alpine:3.20.3 > examples/payload.json
    ```
 
 1. Sign with OpenSSL (external signer)
@@ -90,7 +90,7 @@ The workflow is the same as v2 for BYO-PKI compatibility:
        --signature examples/payloadbase64.sig \
        --certificate examples/leaf.crt \
        --certificate-chain examples/certificate_chain.pem \
-       127.0.0.1:5003/alpine:3.20.3
+       127.0.0.1:5007/alpine:3.20.3
    ```
 
    The v3 binary handles this with v3's internal format.
@@ -106,7 +106,7 @@ cosign verify \
     --certificate-oidc-issuer-regexp '.*' \
     --private-infrastructure \
     --insecure-ignore-sct \
-    "127.0.0.1:5003/alpine:3.20.3"
+    "127.0.0.1:5007/alpine:3.20.3"
 ```
 
 ## Backward Compatibility
