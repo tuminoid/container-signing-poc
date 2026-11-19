@@ -4,10 +4,10 @@
 # manifests admit pods by platform digest and not by tag.
 
 FLOW := bundle-multiarch
+SUITE := cosign-v4-pre
 COSIGN_DIR := ../cosign-v4-pre
 SOURCE := 127.0.0.1:5004
-POLICY := kyverno-policy-bundle.yaml
-POLICY_NAME := check-image-bundle
+POLICIES := kyverno-policy-bundle.yaml
 TRUST := $(COSIGN_DIR)/examples/trusted-root-tsa.json
 UNSIGNED_SOURCE := alpine:3.20.2
 IMAGE_UNSIGNED := bundle/alpine:3.20.2

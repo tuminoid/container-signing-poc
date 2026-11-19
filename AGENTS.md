@@ -155,17 +155,19 @@ while the trusted root carries only the root CA.
 ### Kyverno (`kyverno/`)
 
 ```bash
-# Setup Kind cluster, registry:3, zot and pinned Kyverno (rerunnable,
-# registries start empty)
-make setup
+# Setup the Kind cluster of a suite, kyverno-<suite>, with its registries
+# and Kyverno version (rerunnable, registries start empty). Every flow runs
+# it for its own suite; suites are in kyverno/cluster.mk
+make setup SUITE=cosign-v4-pre
 
-# Run Notation e2e test
+# Run Notation e2e test (1.20)
 make -f notation.mk
 
-# Run Cosign v2 e2e test
+# Run Cosign v2 e2e test: legacy ClusterPolicy on 1.19
 make -f cosign-v2.mk
 
-# Run Cosign v3 e2e test
+# Run Cosign v3 e2e test on 1.19: ClusterPolicy, ImageValidatingPolicy and
+# both together (MODES=legacy new both)
 make -f cosign-v3.mk
 
 # Run Sigstore bundle e2e test (cosign-v4-pre v4-tsa; SIGN_TARGET=v4-rsa,
@@ -284,12 +286,15 @@ plugin that:
 
 ### Kyverno Policies
 
-`ImageValidatingPolicy` (`policies.kyverno.io/v1`) files in `kyverno/policy/`,
-since Kyverno 1.20 no longer runs `ClusterPolicy`:
+Files in `kyverno/policy/`. Kyverno 1.20 no longer runs `ClusterPolicy`, so
+the legacy flows pin 1.19, which runs both APIs, and the rest pin 1.20:
 
+1. `kyverno-policy-cosign-legacy.yaml`: `ClusterPolicy` `verifyImages`, legacy
+   Cosign signatures, root CA, transparency log disabled (`cosign-v2.mk`,
+   `cosign-v3.mk`)
+1. `kyverno-policy-cosign.yaml`: its `ImageValidatingPolicy`
+   (`policies.kyverno.io/v1`) replacement (`cosign-v3.mk`)
 1. `kyverno-policy-notation.yaml`: Notation signatures, root CA
-1. `kyverno-policy-cosign.yaml`: legacy Cosign signatures (v2 and v3), root CA,
-   transparency log disabled
 1. `kyverno-policy-bundle.yaml`: Sigstore bundles, inline trusted root
 
 `__TRUST__` in each is replaced with the flow's CA or trusted root by
@@ -327,7 +332,7 @@ bypassed.
 Different ports are used to avoid conflicts:
 
 - `127.0.0.1:5000` - Containerd test registry
-- `127.0.0.1:5001` - Kyverno Kind registry
+- `127.0.0.1:5001` - Kyverno bundle Kind registry (`kyverno-cosign-v4-pre-registry`)
 - `127.0.0.1:5002` - Notation test registry
 - `127.0.0.1:5003` - CRI-O test registry / Cosign v2 test registry
 - `127.0.0.1:5004` - Cosign v4-pre test registry (registry:3)
@@ -335,8 +340,11 @@ Different ports are used to avoid conflicts:
 - `127.0.0.1:5006` - Cosign v4-pre timestamp authority
 - `127.0.0.1:5007` - Cosign v3 test registry
 - `127.0.0.1:5008` - Cosign v4-pre zot registry (OCI referrers API)
-- `127.0.0.1:5009` - Kyverno Kind zot registry (`kind-zot`)
+- `127.0.0.1:5009` - Kyverno bundle Kind zot registry (`kyverno-cosign-v4-pre-zot`)
 - `127.0.0.1:5012` - Cosign v4-pre TLS registry (registry:3, https only)
+- `127.0.0.1:5013` - Kyverno cosign-v2 Kind registry (`kyverno-cosign-v2-registry`)
+- `127.0.0.1:5014` - Kyverno cosign-v3 Kind registry (`kyverno-cosign-v3-registry`)
+- `127.0.0.1:5015` - Kyverno Notation Kind registry (`kyverno-notation-registry`)
 
 ### Certificate Generation
 
@@ -417,8 +425,10 @@ plain http in containerd (`kyverno/scripts/kind-cluster.sh`). Kyverno's bundle
 referrer fetch ignores `--allowInsecureRegistry` and only falls back to http
 for private IPs, so a container name does not work for bundles.
 
-All kubectl and helm calls use `--context kind-kyverno`; never rely on the
-current context, other Kind clusters may share the machine.
+Each signing directory has its own cluster, `kyverno-<suite>`
+(`kyverno/cluster.mk`); the bundle flows share `kyverno-cosign-v4-pre`. All
+kubectl and helm calls name its context, `kind-kyverno-<suite>`; never rely
+on the current context, other Kind clusters may share the machine.
 
 ## File Structure
 
@@ -432,7 +442,7 @@ current context, other Kind clusters may share the machine.
 ├── cosign-v4-pre/         # Cosign v4-pre (v0.3 bundles only, registry:3)
 ├── oras/                  # Oras signature copying (shell)
 ├── kyverno/               # Kyverno admission controller policies
-│   ├── policy/            # ImageValidatingPolicy YAML files
+│   ├── policy/            # ClusterPolicy and ImageValidatingPolicy files
 │   └── scripts/           # Kind cluster setup
 ├── crio/                  # CRI-O runtime verification POC
 │   ├── config/            # Policy.json and registry configs

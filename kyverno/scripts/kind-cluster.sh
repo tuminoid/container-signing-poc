@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Kind cluster plus two plain-http registries on the kind network. Rerunnable;
-# the registries start empty on every run.
+# One Kind cluster plus its plain-http registries on the kind network.
+# Rerunnable; the cluster is kept, its registries start empty on every run.
 #
-# kind-registry is registry:3, which serves referrers through the fallback
-# tag; kind-zot is zot, which serves the referrers API. ZOT_IMAGE names its
-# image, ../../cosign-v4-pre/zot.json its configuration.
+# CLUSTER names the cluster, REGISTRY_PORT the host port of its registry:3,
+# ${CLUSTER}-registry, which serves referrers through the fallback tag.
+# ZOT_PORT, when set, adds ${CLUSTER}-zot, zot from ZOT_IMAGE with
+# ../../cosign-v4-pre/zot.json, which serves the referrers API.
 #
 # Workloads and Kyverno reference a registry by its kind network IP:
 # Kyverno fetches Sigstore bundle referrers without honouring
@@ -13,8 +14,9 @@
 
 set -eux
 
-CLUSTER="kyverno"
-ZOT_IMAGE="${ZOT_IMAGE:?ZOT_IMAGE}"
+CLUSTER="${CLUSTER:?CLUSTER}"
+REGISTRY_PORT="${REGISTRY_PORT:?REGISTRY_PORT}"
+ZOT_PORT="${ZOT_PORT:-}"
 ZOT_CONFIG="$(cd "$(dirname "$0")/../../cosign-v4-pre" && pwd)/zot.json"
 
 # kind create and kind export switch the current context; everything here uses
@@ -57,8 +59,11 @@ registry() {
     done
 }
 
-registry kind-registry 5001 registry:3
-registry kind-zot 5009 -v "${ZOT_CONFIG}:/etc/zot/config.json:ro" "${ZOT_IMAGE}"
+registry "${CLUSTER}-registry" "${REGISTRY_PORT}" registry:3
+if [[ -n "${ZOT_PORT}" ]]; then
+    registry "${CLUSTER}-zot" "${ZOT_PORT}" -v "${ZOT_CONFIG}:/etc/zot/config.json:ro" \
+        "${ZOT_IMAGE:?ZOT_IMAGE}"
+fi
 
 # https://github.com/kubernetes/enhancements/tree/master/keps/sig-cluster-lifecycle/generic/1755-communicating-a-local-registry
 cat <<EOF | kubectl --context "kind-${CLUSTER}" apply -f -
@@ -69,6 +74,6 @@ metadata:
     namespace: kube-public
 data:
     localRegistryHosting.v1: |
-        host: "localhost:5001"
+        host: "localhost:${REGISTRY_PORT}"
         help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
 EOF

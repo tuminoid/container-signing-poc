@@ -1,18 +1,21 @@
-# Kind cluster, registry and Kyverno for the admission flows (*.mk)
+# Kind clusters, registries and Kyverno for the admission flows (*.mk). Each
+# flow names its suite, SUITE, and runs setup itself, which creates that
+# suite's cluster with its Kyverno version if missing; see cluster.mk.
 
-KYVERNO_CHART_VERSION := 3.10.0
+include cluster.mk
+
 # zot, the referrers API registry, pinned once in ../cosign-v4-pre/Makefile
 ZOT_IMAGE := $(shell sed -n 's/^ZOT_IMAGE := //p' ../cosign-v4-pre/Makefile)
 
 SHELL := /bin/bash
 
-.PHONY: all setup check-tools cluster install-kyverno clean api-versions
+.PHONY: all setup check-tools cluster install-kyverno version-check clean api-versions
 
 all: check-tools
-	@echo "targets: setup clean"
-	@echo "after 'make setup', run one of:"
+	@echo "targets: setup clean api-versions"
+	@echo "flows, each running setup for its suite's cluster:"
 	@echo "  make -f cosign-v2.mk"
-	@echo "  make -f cosign-v3.mk"
+	@echo "  make -f cosign-v3.mk MODES='legacy new both'"
 	@echo "  make -f notation.mk"
 	@echo "  make -f cosign-v4-pre.mk"
 
@@ -25,31 +28,40 @@ check-tools:
 	@type -a kubectl &>/dev/null || { echo "error: Install kubectl: https://kubernetes.io/docs/tasks/tools/"; exit 1; }
 
 cluster:
-	ZOT_IMAGE=$(ZOT_IMAGE) ./scripts/kind-cluster.sh
+	CLUSTER=$(CLUSTER) REGISTRY_PORT=$(REGISTRY_PORT) ZOT_PORT=$(ZOT_PORT) \
+		ZOT_IMAGE=$(ZOT_IMAGE) ./scripts/kind-cluster.sh
 
 install-kyverno:
 	helm repo add kyverno https://kyverno.github.io/kyverno/ --force-update
-	helm upgrade --install kyverno kyverno/kyverno --version $(KYVERNO_CHART_VERSION) \
-		--kube-context kind-kyverno -n kyverno --create-namespace --wait \
+	helm upgrade --install kyverno kyverno/kyverno --version $(KYVERNO_CHART) \
+		--kube-context kind-$(CLUSTER) -n kyverno --create-namespace --wait \
 		--set admissionController.container.extraArgs.allowInsecureRegistry=true
 
-clean:
-	-docker rm -f kind-registry kind-zot
-	-kind delete cluster --name kyverno
+# The suite's cluster must run its Kyverno version
+version-check:
+	@v=$$($(KUBECTL) -n kyverno get deploy kyverno-admission-controller \
+		-o jsonpath='{.spec.template.spec.containers[0].image}'); \
+	case "$$v" in *:v$(KYVERNO).*) ;; \
+	*) echo "[FAIL] $(CLUSTER) runs Kyverno $$v, not $(KYVERNO): make setup SUITE=$(SUITE)"; exit 1 ;; esac
 
-# Kyverno 1.20.0 refuses to create the former ClusterPolicy. It serves
-# ImageValidatingPolicy v1 and v1beta1 with one schema and no conversion, and
-# stores v1beta1.
+clean:
+	-docker rm -f $(foreach s,$(SUITES),$(call cluster-of,$(s))-registry $(call cluster-of,$(s))-zot)
+	-$(foreach s,$(SUITES),kind delete cluster --name $(call cluster-of,$(s));)
+
+# Kyverno 1.20.0, here the bundle cluster's, refuses to create the former
+# ClusterPolicy. It serves ImageValidatingPolicy v1 and v1beta1 with one schema
+# and no conversion, and stores v1beta1.
 IVP_VERSIONS := .spec.conversion.strategy == "None" and \
 	[.spec.versions[] | select(.storage) | .name] == ["v1beta1"] and \
 	([.spec.versions[] | select(.served and (.name == "v1" or .name == "v1beta1")) | .schema] | \
 		length == 2 and .[0] == .[1])
 
-api-versions:
-	@kubectl --context kind-kyverno apply --dry-run=server -f policy/legacy-clusterpolicy.yaml 2>&1 | \
+api-versions: SUITE := cosign-v4-pre
+api-versions: version-check
+	@$(KUBECTL) apply --dry-run=server -f policy/kyverno-policy-cosign-legacy.yaml 2>&1 | \
 		grep -q 'no longer accepts create or update requests' || \
 		{ echo "[FAIL] the legacy ClusterPolicy was not refused"; exit 1; }
-	@kubectl --context kind-kyverno get crd imagevalidatingpolicies.policies.kyverno.io -o json | \
+	@$(KUBECTL) get crd imagevalidatingpolicies.policies.kyverno.io -o json | \
 		jq -e '$(IVP_VERSIONS)' >/dev/null || \
 		{ echo "[FAIL] ImageValidatingPolicy versions changed"; exit 1; }
 	@echo "[OK] ClusterPolicy refused; ImageValidatingPolicy v1 and v1beta1 served alike, v1beta1 stored"

@@ -1,7 +1,10 @@
 # Top-level e2e flows: sign, relocate, admit with Kyverno.
-# notation: notation -> oras -> kyverno
-# cosign-v2, cosign-v3: cosign legacy signatures -> cosign save/load -> kyverno
-# cosign-v4-pre: sigstore bundles -> oras -> kyverno
+# notation: notation -> oras -> kyverno 1.20 ImageValidatingPolicy
+# cosign-v2: cosign legacy signatures -> cosign save/load -> kyverno 1.19
+#   ClusterPolicy
+# cosign-v3: same signatures -> kyverno 1.19 ClusterPolicy, ImageValidatingPolicy
+#   and both together
+# cosign-v4-pre: sigstore bundles -> oras -> kyverno 1.20 ImageValidatingPolicy
 
 NOTATION_DIR := notation
 ORAS_DIR := oras
@@ -22,15 +25,12 @@ all:
 	@echo "targets: notation cosign cosign-v2 cosign-v3 cosign-v4-pre tripwire-cosign-main local-image-test clean"
 
 notation:
-	make -C $(KYVERNO_DIR) setup
 	make -C $(KYVERNO_DIR) -f notation.mk
 
 cosign-v2:
-	make -C $(KYVERNO_DIR) setup
 	make -C $(KYVERNO_DIR) -f cosign-v2.mk
 
 cosign-v3:
-	make -C $(KYVERNO_DIR) setup
 	make -C $(KYVERNO_DIR) -f cosign-v3.mk
 
 cosign: cosign-v2 cosign-v3
@@ -39,9 +39,10 @@ cosign: cosign-v2 cosign-v3
 # Sigstore bundles only, anticipating cosign v4: the standalone signing flows,
 # then the Kyverno flows, which run the remaining cosign-v4-pre targets as
 # their signing step. Separate make runs, as each flow starts from fresh
-# registries and certificates; setup gives each Kyverno flow empty registries.
+# registries and certificates; each Kyverno flow runs setup, which empties the
+# registries and installs the flow's Kyverno version.
 # $(call kyverno-flow,flow file[,variables])
-kyverno-flow = make -C $(KYVERNO_DIR) setup && make -C $(KYVERNO_DIR) -f $(1) $(2)
+kyverno-flow = make -C $(KYVERNO_DIR) -f $(1) $(2)
 
 cosign-v4-pre:
 	make -C $(COSIGN_V4_PRE_DIR) test

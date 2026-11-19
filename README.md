@@ -143,10 +143,14 @@ Basically, the POC is finding the following:
    homogeneous across its services. The v4-pre POC signs with ECDSA P-384 and
    SHA-384, so the earlier claim that only SHA-256 with RSA PKCS#1 works was
    wrong.
-1. Kyverno verifies legacy Cosign signatures the same way as Notation, with
-   transparency log and SCT checks disabled in the policy.
-1. Kyverno 1.20 rejects and no longer runs `kyverno.io` `ClusterPolicy`; all
-   policies here are `policies.kyverno.io/v1` `ImageValidatingPolicy`.
+1. Kyverno verifies legacy Cosign signatures with transparency log and SCT
+   checks disabled in the policy. On Kyverno 1.19 the legacy `ClusterPolicy`
+   `verifyImages` rule does it (`cosign-v2`), and so does an
+   `ImageValidatingPolicy`, alone or with the `ClusterPolicy` at once
+   (`cosign-v3`).
+1. Kyverno 1.20 rejects and no longer runs `kyverno.io` `ClusterPolicy`; the
+   Notation and bundle flows run on it with `policies.kyverno.io/v1`
+   `ImageValidatingPolicy` only.
 
 ### Cosign v4-pre (new bundle format only)
 
@@ -172,6 +176,7 @@ that asserts it; `make cosign-v4-pre` runs them all.
 | CRI-O cannot verify a bundle-only image through `policy.json` ([container-libs#388](https://github.com/podman-container-tools/container-libs/issues/388)) | `crio` test 5 |
 | The signing certificate needs an email or URI SAN: cosign 3.x takes identities from SANs only | `cosign-v4-pre` `v4-san-required` |
 | Kyverno 1.20 refuses to create a `ClusterPolicy`; `ImageValidatingPolicy` `v1` and `v1beta1` are interchangeable | `kyverno` `api-versions` |
+| On Kyverno 1.19 a legacy signature is admitted by the `ClusterPolicy`, by the `ImageValidatingPolicy`, or by both enforcing at once, the migration step: the signed pod passes both, and the unsigned one is denied | `kyverno` `cosign-v2.mk`, `cosign-v3.mk` |
 | `sign-offline.sh` is the cosign-free signing entry point for other repositories: any image by digest, registry and key material, from any directory; its interface is in [cosign-v4-pre](cosign-v4-pre/README.md) | `crio` `sign-image-bundle-only`, with the CRI-O PKI from that directory; `cosign-v4-pre` `v4-tls` on a TLS registry; every bundle target with its own material |
 | Cosign main removes `cosign attach signature`, so the legacy external-signer flow fails there | `make tripwire-cosign-main` |
 
@@ -193,8 +198,10 @@ Run from this directory: `make notation`, `make cosign-v2`, `make cosign-v3`,
 cosign main at a pinned commit, into `build/`, and needs Go.
 
 Each signs in a build registry, relocates the image with its signatures into
-the Kind registry, applies the Kyverno policy, and fails unless the unsigned
-pod and deployment are denied and the signed ones are admitted and running.
+the directory's own Kind cluster, applies the Kyverno policy there, on Kyverno
+1.19 for `cosign-v2` and `cosign-v3` and 1.20 otherwise, and fails unless the
+unsigned pod and deployment are denied and the signed ones are admitted and
+running.
 `make cosign-v4-pre` also runs the bundle signing flows standalone and every
 bundle Kyverno flow. See [kyverno/README.md](kyverno/README.md).
 
@@ -230,7 +237,9 @@ design aspect was not part of the audit based on the findings.
 
 Kyverno 1.20 verifies images only through `ImageValidatingPolicy`
 (`policies.kyverno.io`); the legacy `verifyImages` rules in `ClusterPolicy` are
-no longer executed. It verifies both Notation and Cosign signatures.
+no longer executed. 1.19 runs both, so the legacy flows pin it to show the
+legacy policy and the move to the new one. It verifies both Notation and Cosign
+signatures.
 
 Kyverno is generic policy engine, capable of replacing OPA Gatekeeper etc.
 

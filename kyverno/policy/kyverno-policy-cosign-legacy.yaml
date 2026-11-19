@@ -1,7 +1,9 @@
 # The ClusterPolicy this repository ran for legacy Cosign signatures before
-# Kyverno 1.20, with its digest settings spelled out. kyverno-policy-cosign.yaml
-# replaces it, see README.md for the mapping. Only applied by
-# `make api-versions`, which asserts that Kyverno 1.20 refuses it.
+# Kyverno 1.20, with its digest settings spelled out. ../cosign-v2.mk enforces
+# it on Kyverno 1.19, ../cosign-v3.mk alone and next to
+# kyverno-policy-cosign.yaml, its ImageValidatingPolicy replacement; README.md
+# has the mapping. `make api-versions` asserts that Kyverno 1.20 refuses it.
+# __TRUST__ becomes the root CA, see ../common.mk.
 apiVersion: kyverno.io/v2beta1
 kind: ClusterPolicy
 metadata:

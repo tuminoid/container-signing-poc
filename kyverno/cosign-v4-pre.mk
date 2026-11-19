@@ -5,10 +5,10 @@
 # verifyDigest off.
 
 FLOW := cosign-v4-pre
+SUITE := cosign-v4-pre
 COSIGN_DIR := ../cosign-v4-pre
 SIGN_TARGET ?= v4-tsa
-POLICY := kyverno-policy-bundle.yaml
-POLICY_NAME := check-image-bundle
+POLICIES := kyverno-policy-bundle.yaml
 TRUST := $(COSIGN_DIR)/examples/trusted-root-tsa.json
 UNSIGNED_SOURCE := alpine:3.20.2
 IMAGE_UNSIGNED := bundle/alpine:3.20.2

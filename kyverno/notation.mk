@@ -2,9 +2,9 @@
 # tarball.
 
 FLOW := notation
+SUITE := notation
 NOTATION_DIR := ../notation
-POLICY := kyverno-policy-notation.yaml
-POLICY_NAME := check-image-notation
+POLICIES := kyverno-policy-notation.yaml
 TRUST := $(NOTATION_DIR)/examples/ca.crt
 IMAGE_UNSIGNED := busybox:1.36.0-glibc
 IMAGE_SIGNED := busybox:1.36.1-glibc
