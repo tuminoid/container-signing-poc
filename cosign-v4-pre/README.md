@@ -83,10 +83,12 @@ The legacy path is still affected, see `../cosign-v3` target
 
 Consuming an X.509 chain from bundle verification material requires
 `--allow-certificate-chain`. Without it cosign does not report skipping the
-bundle; it falls back to the legacy path and fails with a misleading
+bundle; cosign 3.x falls back to the legacy path and fails with a misleading
 `no signatures found`. In `cmd/cosign/cli/verify/verify.go`, `GetBundles`
-returning nothing resets `co.NewBundleFormat` with no warning. The
-`verify-expect-fail` target asserts this, so it fails if diagnostics improve.
+returning nothing resets `co.NewBundleFormat` with no warning. Cosign `main`,
+which has no legacy path, fails with an equally misleading `no valid bundles
+exist in registry`. The `verify-expect-fail` target asserts either, so it
+fails if diagnostics improve.
 
 ### External signing is possible, but not through `cosign attach`
 

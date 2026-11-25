@@ -19,6 +19,12 @@ POLICIES = $(POLICIES_$(MODE))
 DENIED_BY_legacy := $(LEGACY):
 DENIED_BY_new := Policy $(NEW) failed
 DENIED_BY = $(DENIED_BY_$(MODE))
+# The ImageValidatingPolicy alone admits an unsigned ephemeral container on
+# 1.19, see policy/kyverno-policy-cosign.yaml; the ClusterPolicy denies it
+EPHEMERAL_legacy := denied
+EPHEMERAL_new := admitted
+EPHEMERAL_both := denied
+EPHEMERAL = $(EPHEMERAL_$(MODE))
 TRUST := $(COSIGN_DIR)/examples/ca.crt
 IMAGE_UNSIGNED := alpine:3.20.2
 # cosign-v3 load appends -loaded to the tag it loads into

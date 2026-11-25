@@ -83,11 +83,15 @@ func runCommand(external_cmd string, payload string) ([]byte, error) {
 	cmd := exec.Command(external_cmd)
 	cmd.Stdin = strings.NewReader(payload)
 
-	var out strings.Builder
+	var out, stderr strings.Builder
 	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
 		return nil, err
 	}
 	return []byte(out.String()), nil
@@ -103,7 +107,6 @@ func getCertificateChain(ctx context.Context) ([][]byte, error) {
 	for _, cert := range certs {
 		rawCertChain = append(rawCertChain, cert.Raw)
 	}
-	fmt.Fprintf(os.Stderr, "rawchain: %s\n", rawCertChain[0])
 	return rawCertChain, nil
 }
 
@@ -114,7 +117,14 @@ func readCertificateChain(ctx context.Context) ([]*x509.Certificate, error) {
 	if err != nil {
 		return nil, errors.New("failed to read certificate chain from EXTERNAL_CERT_CHAIN=" + certChainFile)
 	}
-	return parseCertificates(certBytes)
+	certs, err := parseCertificates(certBytes)
+	if err != nil {
+		return nil, err
+	}
+	if len(certs) == 0 {
+		return nil, errors.New("no certificate in EXTERNAL_CERT_CHAIN=" + certChainFile)
+	}
+	return certs, nil
 }
 
 // parseCertificates parses certificates from either PEM or DER data

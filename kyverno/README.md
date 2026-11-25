@@ -37,8 +37,9 @@ flowchart LR
 
 Each flow signs in its own registry, relocates the signed image with its
 signatures into the Kind registry, applies its policies, and asserts that the
-unsigned pod and deployment are denied while the signed ones are admitted and
-run.
+unsigned pod and deployment, an unsigned init container and an unsigned
+`kubectl debug` ephemeral container are denied while the signed ones are
+admitted and run; `cosign-v3.mk` asserts the exception below.
 
 | Flow | Kyverno | Signed by | Relocated with | Policies in `policy/` |
 | -- | -- | -- | -- | -- |
@@ -104,7 +105,7 @@ replaces it.
 | `validationFailureAction: Enforce` | `validationActions: [Deny]` |
 | `webhookTimeoutSeconds` | `webhookConfiguration.timeoutSeconds` |
 | `failurePolicy` | `failurePolicy` |
-| `rules[].match.any[].resources.kinds: [Pod]` | `matchConstraints.resourceRules`: pods, `CREATE` and `UPDATE` |
+| `rules[].match.any[].resources.kinds: [Pod]` | `matchConstraints.resourceRules`: pods, `CREATE` and `UPDATE`, plus `pods/ephemeralcontainers`, which the `ClusterPolicy` matches implicitly; the reports controller must be granted read on it, or the policy never becomes ready (`Makefile` `install-kyverno`). On 1.19 it turns autogen off, so `kyverno-policy-cosign.yaml` leaves it out, and `cosign-v3.mk` asserts that this policy alone admits an unsigned ephemeral container |
 | `verifyImages[].imageReferences` | `matchImageReferences[].glob` |
 | `verifyImages[].type: Cosign`, `SigstoreBundle` | `attestors[].cosign`, for legacy signatures and bundles alike |
 | `verifyImages[].type: Notary` | `attestors[].notary` |
@@ -112,6 +113,7 @@ replaces it.
 | `attestors[].entries[].certificates.cert` (Notary) | `attestors[].notary.certs.value` |
 | `certificates.rekor.ignoreTlog`, `certificates.ctlog.ignoreSCT` | `cosign.ctlog.insecureIgnoreTlog`, `cosign.ctlog.insecureIgnoreSCT` |
 | `attestors[].count`, `entries` | the CEL `validations[].expression`, here `verifyImageSignatures(image, [attestors.cosign]) > 0` for every container |
+| containers, init containers and ephemeral containers, all verified | `images.containers` holds containers only; the expression adds `images.initContainers` and `images.ephemeralContainers` |
 | `verifyImages[].mutateDigest`, `verifyDigest`, `required` | `validationConfigurations.mutateDigest`, `verifyDigest`, `required`, each defaulting to `true` |
 | rules generated for Pod controllers | `autogen`, on by default: the unsigned deployment is denied in every flow |
 

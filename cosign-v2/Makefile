@@ -12,7 +12,7 @@ TEST_IMAGE_SIGN := $(TEST_REGISTRY)/$(TEST_IMAGE)@$(TEST_DIGEST_LOCAL)
 EXAMPLES_DIR := examples
 SHELL := /bin/bash
 
-# Override to use locally-built cosign (e.g., COSIGN_BIN=./cosign-patched make test)
+# Override to use another cosign build (e.g., COSIGN_BIN=../build/cosign-main/cosign make test)
 COSIGN_BIN ?= cosign
 
 # set gencrt script (bring your own certificates) to yes to avoid generating new

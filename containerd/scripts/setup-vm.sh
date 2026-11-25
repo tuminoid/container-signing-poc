@@ -59,11 +59,23 @@ echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 echo "   OK: Kubernetes repository added"
 echo ""
 
-echo "==> Installing containerd..."
+echo "==> Installing docker and containerd..."
+# Docker's containerd.io is the containerd under test (2.1+); docker itself
+# runs the local registries.
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+# shellcheck disable=SC1091
+echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "${VERSION_CODENAME:?}") stable" | \
+    tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt-get update -qq
-# Use DEBIAN_FRONTEND=noninteractive to avoid prompts
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::="--force-confold" containerd
-echo "   OK: containerd installed"
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
+    containerd.io docker-ce docker-ce-cli
+systemctl enable docker
+systemctl start docker
+echo "   OK: docker and containerd installed"
 echo ""
 
 echo "==> Installing Kubernetes components..."
@@ -78,9 +90,6 @@ containerd config default > /etc/containerd/config.toml
 
 # Enable SystemdCgroup
 sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-# Add OCI hooks ConfigPath to runc runtime options
-sed -i "/\[plugins\.'io\.containerd\.cri\.v1\.runtime'\.containerd\.runtimes\.runc\.options\]/a\\            ConfigPath = '/etc/containerd/oci-hooks.d'" /etc/containerd/config.toml
 
 systemctl restart containerd
 systemctl enable containerd
@@ -112,31 +121,9 @@ sysctl --system > /dev/null
 echo "   OK: Prerequisites configured"
 echo ""
 
-echo "==> Installing docker (for local registry)..."
-# Add Docker's official GPG key
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --yes --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-# Add the repository
-# shellcheck disable=SC1091
-echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "${VERSION_CODENAME:?}") stable" | \
-    tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq -o Dpkg::Options::="--force-confold" docker-ce docker-ce-cli
-
-systemctl enable docker
-systemctl start docker
-echo "   OK: docker installed"
-echo ""
-
-echo "==> Creating directories for hooks and certificates..."
+echo "==> Creating directories for certificates..."
 mkdir -p /usr/local/bin
 mkdir -p /etc/containerd/certs
-mkdir -p /etc/containerd/oci-hooks.d
 echo "   OK: Directories created"
 echo ""
 

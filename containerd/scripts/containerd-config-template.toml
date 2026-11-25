@@ -203,10 +203,6 @@ imports = []
       platform = 'linux/amd64'
       snapshotter = 'overlayfs'
       differ = ''
-      [plugins.'io.containerd.transfer.v1.local'.unpack_config.verifier]
-        type = 'command'
-        command = '/opt/containerd/image-verifier/bin/verifier'
-        args = ['-name', '{src.name}', '-digest', '{src.digest}']
     max_concurrent_downloads = 3
     concurrent_layer_fetch_buffer = 0
     max_concurrent_uploaded_layers = 3

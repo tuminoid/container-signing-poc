@@ -14,7 +14,7 @@ This experiment has multiple parts and options:
    or
    - [Signing with Cosign v2 (external signer)](cosign-v2/README.md)
    or
-   - [Signing with Cosign v3 (native signing)](cosign-v3/README.md)
+   - [Signing with Cosign v3 (external signer, v3 binary)](cosign-v3/README.md)
    or
    - [Signing with Cosign v4-pre (new bundle format only)](cosign-v4-pre/README.md)
 
@@ -130,19 +130,19 @@ Basically, the POC is finding the following:
 ### Cosign
 
 1. Cosign does not need plugins as it can be operated via command line to
-   achieve external signing (v2) or use native signing (v3).
+   achieve external signing (v2 and v3 legacy format, v4-pre bundles).
 1. Cosign v2 uses external signer + `cosign attach signature` for legacy format
-1. Cosign v3 uses native `cosign sign --key` for new bundle format
+1. Cosign v3 runs the same legacy external-signer flow with the v3 binary;
+   its native `cosign sign --key` bundle signing is in v4-pre
 1. Both v2 and v3 use same CA-based certificate verification
 1. Cosign can also save and load images with signatures by itself, Oras is not
    needed
 1. The Cosign ecosystem restricts signatures to the algorithms in sigstore's
-   [algorithm registry](https://github.com/sigstore/sigstore/blob/main/pkg/signature/algorithm_registry.go):
-   RSA PKCS#1 v1.5 (2048/3072/4096) with SHA-256, and ECDSA P-256, P-384 and
-   P-521. RSA-PSS and SHA-512-with-RSA are excluded, as Sigstore keeps support
-   homogeneous across its services. The v4-pre POC signs with ECDSA P-384 and
-   SHA-384, so the earlier claim that only SHA-256 with RSA PKCS#1 works was
-   wrong.
+   [algorithm registry](https://github.com/sigstore/sigstore/blob/main/pkg/signature/algorithm_registry.go).
+   It admits RSA with SHA-256 only, so the RSA-PSS with SHA-512 that Notation
+   signs here has no Sigstore equivalent. Tested here are ECDSA P-384 with
+   SHA-384 and RSA 4096 PKCS#1 v1.5 with SHA-256 (v4-pre), and ECDSA P-384
+   with SHA-256 (legacy flows).
 1. Kyverno verifies legacy Cosign signatures with transparency log and SCT
    checks disabled in the policy. On Kyverno 1.19 the legacy `ClusterPolicy`
    `verifyImages` rule does it (`cosign-v2`), and so does an
@@ -161,7 +161,7 @@ that asserts it; `make cosign-v4-pre` runs them all.
 | Finding | Asserted by |
 | -- | -- |
 | Signing with a private PKI works: the bundle carries leaf + intermediate while the trust anchor is the root alone. [cosign#3976](https://github.com/sigstore/cosign/issues/3976) is fixed on the bundle codepath as of cosign 3.1.3; the legacy path is still affected | `cosign-v4-pre` `test`; `cosign-v3` `repro-3976-legacy` |
-| Verification requires `--allow-certificate-chain`; without it cosign falls back to the legacy path and reports `no signatures found` | `cosign-v4-pre` `test` |
+| Verification requires `--allow-certificate-chain`; without it cosign 3.x falls back to the legacy path and reports `no signatures found`, cosign main `no valid bundles exist in registry` | `cosign-v4-pre` `test` |
 | External signing works without `cosign attach`: a `sigstore-kms-*` plugin keeps the key from cosign, or the bundle is built and published entirely without cosign (openssl plus `oras attach`), asynchronously | `cosign-v4-pre` `v4-external-plugin`, `v4-external-offline` |
 | The production algorithm, an RSA 4096 leaf with PKCS#1 v1.5 and SHA-256 and a URI SAN, works end to end without cosign at signing time: timestamp, bundle, relocation, Kyverno, containerd verifier | `cosign-v4-pre` `v4-rsa`; `kyverno` `cosign-v4-pre.mk SIGN_TARGET=v4-rsa`; `containerd` test 7 |
 | Kyverno admits a private-PKI bundle in one shape only: leaf alone, intermediate in the trusted root, RFC 3161 timestamp. Leaf plus intermediate is denied with `no signatures found`, a leaf without timestamp with `threshold not met for verified signed timestamps` | `kyverno` `cosign-v4-pre.mk`, `bundle-shapes.mk` |
@@ -170,15 +170,16 @@ that asserts it; `make cosign-v4-pre` runs them all.
 | On `registry:3` bundles are found through the fallback tag, on zot through the referrers API; signing, verification, relocation and admission work on both | `cosign-v4-pre` `v4-referrers`; `kyverno` `bundle-zot.mk` |
 | A development bundle next to the production one is harmless: a trusted root without the development CA admits on the production bundle. Deleting it before export, or signing in a clean promotion repository, leaves the production bundle alone | `cosign-v4-pre` `v4-dev-signatures`; `kyverno` `bundle-dev.mk` |
 | One trusted root holds two CA generations with validity windows; dropping one, or closing its window, fails its signatures | `cosign-v4-pre` `v4-rotation` |
-| A timestamped bundle outlives its leaf: after the leaf expires it still verifies and Kyverno admits it; an untimestamped bundle fails | `cosign-v4-pre` `v4-leaf-expiry`; `kyverno` `bundle-expiry.mk` |
+| A timestamped bundle outlives its leaf: after the leaf expires it still verifies and Kyverno and the containerd verifier admit it; an untimestamped bundle fails | `cosign-v4-pre` `v4-leaf-expiry`; `kyverno` `bundle-expiry.mk`; `containerd` test 13 |
 | A bundle covers one digest. On a multi-arch image, a bundle on the index admits pulls by tag, not by platform digest, in Kyverno and in the containerd verifier alike; sign the index and the platform manifests | `cosign-v4-pre` `v4-multiarch`; `kyverno` `bundle-multiarch.mk`; `containerd` tests 8 to 11 |
-| The containerd verifier, a `cosign verify` wrapper, verifies bundles against a trusted root, but is skipped on the CRI local pull path, `use_local_image_pull = true`, that a decrypting node needs | `containerd` tests 5 to 7, 12 |
+| The containerd verifier, a `cosign verify` wrapper, verifies legacy signatures against a root CA and bundles against a trusted root, but is skipped on the CRI local pull path, `use_local_image_pull = true`, that a decrypting node needs | `containerd` tests 1 to 7, 12 |
 | CRI-O cannot verify a bundle-only image through `policy.json` ([container-libs#388](https://github.com/podman-container-tools/container-libs/issues/388)) | `crio` test 5 |
 | The signing certificate needs an email or URI SAN: cosign 3.x takes identities from SANs only | `cosign-v4-pre` `v4-san-required` |
 | Kyverno 1.20 refuses to create a `ClusterPolicy`; `ImageValidatingPolicy` `v1` and `v1beta1` are interchangeable | `kyverno` `api-versions` |
 | On Kyverno 1.19 a legacy signature is admitted by the `ClusterPolicy`, by the `ImageValidatingPolicy`, or by both enforcing at once, the migration step: the signed pod passes both, and the unsigned one is denied | `kyverno` `cosign-v2.mk`, `cosign-v3.mk` |
+| An `ImageValidatingPolicy` covers init and ephemeral containers only when its expression names them and it matches `pods/ephemeralcontainers`, which the reports controller needs read access to. On 1.19 that match turns autogen off, so the 1.19 policy alone admits an unsigned `kubectl debug` container, which the `ClusterPolicy` denies | every `kyverno` flow; `cosign-v3.mk` |
 | `sign-offline.sh` is the cosign-free signing entry point for other repositories: any image by digest, registry and key material, from any directory; its interface is in [cosign-v4-pre](cosign-v4-pre/README.md) | `crio` `sign-image-bundle-only`, with the CRI-O PKI from that directory; `cosign-v4-pre` `v4-tls` on a TLS registry; every bundle target with its own material |
-| Cosign main removes `cosign attach signature`, so the legacy external-signer flow fails there | `make tripwire-cosign-main` |
+| Cosign main removes `cosign attach signature` and legacy verification, so the legacy external-signer flow fails there, and so does verifying its signature | `make tripwire-cosign-main` |
 
 Registries other than the local `registry:3` and zot are not covered.
 

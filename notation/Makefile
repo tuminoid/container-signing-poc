@@ -35,7 +35,7 @@ check-tools:
 
 build:
 	rm -f "$(SRC_DIR)/$(SRC_BIN)"
-	cd "$(SRC_DIR)" && go build .
+	cd "$(SRC_DIR)" && go test . && go build .
 
 install: build
 	mkdir -p "$(TGT_DIR)"
@@ -63,7 +63,6 @@ certificates:
 		-subj "/O=Notation/CN=Notation Root CA" \
 		-out $(EXAMPLES_DIR)/ca.crt -addext "keyUsage=critical,keyCertSign"
 
-	openssl genrsa -out $(EXAMPLES_DIR)/leaf.key 4096
 	openssl req -newkey rsa:4096 -nodes -keyout $(EXAMPLES_DIR)/leaf.key \
 		-subj "/CN=Notation.leaf" -out $(EXAMPLES_DIR)/leaf.csr
 

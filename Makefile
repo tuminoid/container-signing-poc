@@ -15,14 +15,10 @@ COSIGN_V4_PRE_DIR := cosign-v4-pre
 
 SHELL := /bin/bash
 
-# For local-image-test: path to patched cosign source
-COSIGN_SOURCE_DIR ?= $(HOME)/git/sigstore/cosign
-COSIGN_PATCHED := cosign-patched
-
-.PHONY: all notation cosign cosign-v2 cosign-v3 cosign-v4-pre clean local-image-test tripwire-cosign-main
+.PHONY: all notation cosign cosign-v2 cosign-v3 cosign-v4-pre clean tripwire-cosign-main
 
 all:
-	@echo "targets: notation cosign cosign-v2 cosign-v3 cosign-v4-pre tripwire-cosign-main local-image-test clean"
+	@echo "targets: notation cosign cosign-v2 cosign-v3 cosign-v4-pre tripwire-cosign-main clean"
 
 notation:
 	make -C $(KYVERNO_DIR) -f notation.mk
@@ -66,9 +62,13 @@ cosign-v4-pre:
 
 # Tripwire: cosign main at a pinned commit, built into build/cosign-main, has
 # no attach signature command, and the legacy attach flow of cosign-v2 fails
-# there for it. Refresh the pin to see whether that still holds.
-COSIGN_MAIN_COMMIT := 0743bfcff5f81ec49ffcea2f61b98938f6ba70ec
+# there for it. A legacy signature attached by the installed cosign does not
+# verify there either: --ca-roots is gone, and with a trusted root cosign main
+# looks for bundles only. Refresh the pin to see whether that still holds.
+COSIGN_MAIN_COMMIT := ab26c80dd5737351ebdeda7e52ba1f568b26938e
 COSIGN_MAIN_DIR := $(CURDIR)/build/cosign-main
+# The image cosign-v2 signs, pinned there
+LEGACY_REF := 127.0.0.1:5003/alpine@$(shell sed -n 's/^TEST_DIGEST_LOCAL := //p' $(COSIGN_V2_DIR)/Makefile)
 
 tripwire-cosign-main:
 	GOBIN=$(COSIGN_MAIN_DIR) go install github.com/sigstore/cosign/v3/cmd/cosign@$(COSIGN_MAIN_COMMIT)
@@ -80,23 +80,23 @@ tripwire-cosign-main:
 		echo "[FAIL] the legacy attach flow passes on cosign main"; exit 1; fi
 	@grep -q 'unknown flag: --payload' $(COSIGN_MAIN_DIR)/legacy.log || \
 		{ echo "[FAIL] unexpected failure, see $(COSIGN_MAIN_DIR)/legacy.log"; exit 1; }
+	make -C $(COSIGN_V2_DIR) clean test
+	@if make -C $(COSIGN_V2_DIR) verify COSIGN_BIN=$(COSIGN_MAIN_DIR)/cosign \
+		> $(COSIGN_MAIN_DIR)/legacy-verify.log 2>&1; then \
+		echo "[FAIL] legacy verification passes on cosign main"; exit 1; fi
+	@grep -q 'unknown flag: --ca-roots' $(COSIGN_MAIN_DIR)/legacy-verify.log || \
+		{ echo "[FAIL] unexpected failure, see $(COSIGN_MAIN_DIR)/legacy-verify.log"; exit 1; }
+	cosign trusted-root create --out=$(COSIGN_MAIN_DIR)/trusted-root.json \
+		--fulcio="url=https://private.local,certificate-chain=$(COSIGN_V2_DIR)/examples/ca.crt"
+	@if out=$$($(COSIGN_MAIN_DIR)/cosign verify --trusted-root=$(COSIGN_MAIN_DIR)/trusted-root.json \
+		--allow-certificate-chain \
+		--certificate-identity-regexp '.*' --certificate-oidc-issuer-regexp '.*' \
+		--insecure-ignore-tlog --insecure-ignore-sct $(LEGACY_REF) 2>&1); then \
+		echo "[FAIL] cosign main verifies a legacy signature against a trusted root"; exit 1; fi; \
+	grep -q 'no valid bundles exist in registry' <<< "$$out" || \
+		{ echo "[FAIL] unexpected failure: $$out"; exit 1; }
 	make -C $(COSIGN_V2_DIR) clean
-	@echo "[OK] cosign main $(COSIGN_MAIN_COMMIT): the legacy attach flow fails, attach signature is gone"
-
-local-image-test:
-	@echo "==> Building patched cosign from $(COSIGN_SOURCE_DIR)..."
-	@test -d "$(COSIGN_SOURCE_DIR)" || (echo "error: Cosign source not found at $(COSIGN_SOURCE_DIR). Set COSIGN_SOURCE_DIR." && exit 1)
-	@test -f "$(COSIGN_SOURCE_DIR)/go.mod" || (echo "error: Invalid cosign source (no go.mod)" && exit 1)
-	cd $(COSIGN_SOURCE_DIR) && go build -o $(CURDIR)/$(COSIGN_PATCHED) ./cmd/cosign
-	@test -f $(COSIGN_PATCHED) || (echo "error: Build failed" && exit 1)
-	@echo "==> Testing cosign-v2 local image verification..."
-	$(MAKE) -C $(COSIGN_V2_DIR) e2e-local COSIGN_BIN=$(CURDIR)/$(COSIGN_PATCHED) || (rm -f $(COSIGN_PATCHED) && exit 1)
-	@echo "==> Testing cosign-v3 local image verification..."
-	$(MAKE) -C $(COSIGN_V3_DIR) e2e-local COSIGN_BIN=$(CURDIR)/$(COSIGN_PATCHED) || (rm -f $(COSIGN_PATCHED) && exit 1)
-	@echo "==> Testing cosign-v3 native signing + local image verification..."
-	$(MAKE) -C $(COSIGN_V3_DIR) test-local-image COSIGN_BIN=$(CURDIR)/$(COSIGN_PATCHED) || (rm -f $(COSIGN_PATCHED) && exit 1)
-	rm -f $(COSIGN_PATCHED)
-	@echo "[OK] All local image verification tests passed"
+	@echo "[OK] cosign main $(COSIGN_MAIN_COMMIT): legacy attach and legacy verification are gone"
 
 clean:
 	make -C $(NOTATION_DIR) clean
@@ -105,5 +105,4 @@ clean:
 	make -C $(COSIGN_V3_DIR) clean
 	make -C $(COSIGN_V4_PRE_DIR) clean
 	make -C $(KYVERNO_DIR) clean
-	rm -f $(COSIGN_PATCHED)
 	rm -rf build/cosign-main

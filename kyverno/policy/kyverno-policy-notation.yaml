@@ -14,7 +14,7 @@ spec:
     - apiGroups: [""]
       apiVersions: ["v1"]
       operations: ["CREATE", "UPDATE"]
-      resources: ["pods"]
+      resources: ["pods", "pods/ephemeralcontainers"]
   matchImageReferences:
   - glob: "*:5000/busybox*"
   attestors:
@@ -25,6 +25,7 @@ spec:
           __TRUST__
   validations:
   - expression: >-
-      images.containers.map(image,
+      (images.containers + images.initContainers +
+      images.ephemeralContainers).map(image,
       verifyImageSignatures(image, [attestors.notary])).all(e, e > 0)
     message: image is not signed by the configured CA

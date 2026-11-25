@@ -116,22 +116,6 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
     if ! kubectl wait --for=condition=Ready nodes --all --timeout=60s 2>/dev/null; then
         fail "Node not Ready, pod tests skipped"
         kubectl get nodes -o wide
-        echo ""
-        echo "==> Skipping Kubernetes pod tests (node not ready)"
-        echo ""
-        if [[ "${FAILURES}" -gt 0 ]]; then
-    echo "==> ${FAILURES} check(s) FAILED"
-    exit 1
-fi
-echo "==> Testing complete!"
-        echo ""
-        echo "Summary:"
-        echo "  BYO-PKI certificate chain verification is working"
-        echo "  Root CA -> Intermediate CA -> Leaf certificate"
-        echo "  Email identity enforcement: ci-build@example.com"
-        echo ""
-        echo "View CRI-O logs for detailed verification:"
-        echo "  sudo journalctl -u crio -n 50 | grep -i signature"
         exit 1
     fi
     echo "   OK: Node is Ready"
@@ -142,9 +126,13 @@ echo "==> Testing complete!"
     echo "   Image: 127.0.0.1:5003/alpine:3.20.3"
     echo ""
 
-    # Clean up any existing pods
-    kubectl delete pod signed-alpine-crio --wait=false >/dev/null 2>&1 || true
-    sleep 2
+    # Clean up any existing pods, and drop the image test 1 pulled, so the
+    # pod pulls it and CRI-O verifies it again
+    kubectl delete pod signed-alpine-crio --ignore-not-found --wait >/dev/null 2>&1 || true
+    sudo crictl rmi 127.0.0.1:5003/alpine:3.20.3 >/dev/null 2>&1 || true
+    if ! left="$(sudo crictl images -q 127.0.0.1:5003/alpine:3.20.3)" || [[ -n "${left}" ]]; then
+        fail "ERROR: 127.0.0.1:5003/alpine:3.20.3 not shown gone from the node, the pod might not pull it"
+    fi
 
     if kubectl apply -f manifests/signed-pod.yaml 2>&1 | tee /tmp/crio-test-k8s-signed.log; then
         echo "Waiting for pod to start..."
@@ -219,7 +207,7 @@ echo "==> Testing complete!"
             kubectl get pod unsigned-alpine-crio
         else
             echo ""
-            echo "[WARN]  Pod status: ${POD_STATUS}"
+            fail "ERROR: Pod status: ${POD_STATUS}"
             kubectl describe pod unsigned-alpine-crio | tail -10
         fi
         kubectl delete pod unsigned-alpine-crio --wait=false >/dev/null 2>&1 || true

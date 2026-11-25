@@ -15,7 +15,7 @@ for all targets.
 
 ## Exporting signatures as blobs with Oras
 
-[Oras](https://oras.book/) is capable of handling Notation signatures, as well
+[Oras](https://oras.land/) is capable of handling Notation signatures, as well
 as any OCI artifacts in a registry.
 
 ```mermaid
@@ -75,30 +75,30 @@ Successfully verified signature for 127.0.0.1:5000/busybox@sha256:28e01ab32c9dbc
 $ notation inspect --insecure-registry 127.0.0.1:5000/busybox
 Inspecting all signatures for signed artifact
 127.0.0.1:5000/busybox@sha256:28e01ab32c9dbcbaae96cf0d5b472f22e231d9e603811857b295e61197e40a9b
-└── application/vnd.cncf.notary.signature
-    └── sha256:724e90a163d792655803ebd579e61523dc40512099842139f922dc65c3431a4e
-        ├── media type: application/jose+json
-        ├── signature algorithm: RSASSA-PSS-SHA-512
-        ├── signed attributes
-        │   ├── signingScheme: notary.x509
-        │   └── signingTime: Thu Mar 21 08:54:23 2024
-        ├── user defined attributes
-        │   └── (empty)
-        ├── unsigned attributes
-        │   └── signingAgent: Notation/1.0.0 external-signer/v0.1.0+unreleased
-        ├── certificates
-        │   ├── SHA256 fingerprint: df3cc01f956e06610b52d2d8922949e9fb605d7c8b3b9b74cc4d136d732fc562
-        │   │   ├── issued to: CN=Notation.leaf
-        │   │   ├── issued by: CN=Notation Root CA,O=Notation
-        │   │   └── expiry: Fri Mar 21 06:54:23 2025
-        │   └── SHA256 fingerprint: 680ad58c555df9437b9485c5f4a7e023c7685dd38e5be3e56d6e5bd5fa0110e6
-        │       ├── issued to: CN=Notation Root CA,O=Notation
-        │       ├── issued by: CN=Notation Root CA,O=Notation
-        │       └── expiry: Fri Mar 21 06:54:21 2025
-        └── signed artifact
-            ├── media type: application/vnd.docker.distribution.manifest.v2+json
-            ├── digest: sha256:28e01ab32c9dbcbaae96cf0d5b472f22e231d9e603811857b295e61197e40a9b
-            └── size: 527
+`-- application/vnd.cncf.notary.signature
+    `-- sha256:724e90a163d792655803ebd579e61523dc40512099842139f922dc65c3431a4e
+        |-- media type: application/jose+json
+        |-- signature algorithm: RSASSA-PSS-SHA-512
+        |-- signed attributes
+        |   |-- signingScheme: notary.x509
+        |   `-- signingTime: Thu Mar 21 08:54:23 2024
+        |-- user defined attributes
+        |   `-- (empty)
+        |-- unsigned attributes
+        |   `-- signingAgent: Notation/1.0.0 external-signer/v0.1.0+unreleased
+        |-- certificates
+        |   |-- SHA256 fingerprint: df3cc01f956e06610b52d2d8922949e9fb605d7c8b3b9b74cc4d136d732fc562
+        |   |   |-- issued to: CN=Notation.leaf
+        |   |   |-- issued by: CN=Notation Root CA,O=Notation
+        |   |   `-- expiry: Fri Mar 21 06:54:23 2025
+        |   `-- SHA256 fingerprint: 680ad58c555df9437b9485c5f4a7e023c7685dd38e5be3e56d6e5bd5fa0110e6
+        |       |-- issued to: CN=Notation Root CA,O=Notation
+        |       |-- issued by: CN=Notation Root CA,O=Notation
+        |       `-- expiry: Fri Mar 21 06:54:21 2025
+        `-- signed artifact
+            |-- media type: application/vnd.docker.distribution.manifest.v2+json
+            |-- digest: sha256:28e01ab32c9dbcbaae96cf0d5b472f22e231d9e603811857b295e61197e40a9b
+            `-- size: 527
 
 ```
 

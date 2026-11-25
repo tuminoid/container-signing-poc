@@ -1,5 +1,8 @@
 # Cosign legacy signatures (cosign-v2, cosign-v3) against a private CA, with
-# no transparency log. __TRUST__ becomes the root CA, see common.mk.
+# no transparency log. __TRUST__ becomes the root CA, see common.mk. It runs
+# on Kyverno 1.19, where matching pods/ephemeralcontainers as well turns
+# autogen off, so unlike the 1.20 policies it does not see the ephemeral
+# containers of kubectl debug; ../cosign-v3.mk asserts that gap.
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
@@ -29,6 +32,7 @@ spec:
             __TRUST__
   validations:
   - expression: >-
-      images.containers.map(image,
+      (images.containers + images.initContainers +
+      images.ephemeralContainers).map(image,
       verifyImageSignatures(image, [attestors.cosign])).all(e, e > 0)
     message: image is not signed by the configured CA

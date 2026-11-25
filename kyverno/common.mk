@@ -18,16 +18,28 @@ POLICY_DIR := policy
 DIGEST ?= true
 # Text the denial of the unsigned pod must contain, naming the policy
 DENIED_BY ?=
+# What admission does to an unsigned kubectl debug ephemeral container,
+# denied or admitted
+EPHEMERAL ?= denied
 # Admission checks after relocation
 CHECKS ?= policy test
 # Upstream image pushed unsigned, when IMAGE_UNSIGNED is not an upstream name
 UNSIGNED_SOURCE ?= $(IMAGE_UNSIGNED)
 
-# $(call denied,pod,image[,cause]): admission denies a pod running the image,
-# naming the cause when given
-denied = out=$$($(KUBECTL) run $(1) --image $(CLUSTER_REGISTRY)/$(2) -- sleep 3600 2>&1); \
+# $(call refused,what,command[,cause]): admission denies the request the
+# command makes, naming the cause when given
+refused = out=$$($(2) 2>&1); \
 	grep -q 'denied the request' <<< "$$out" && grep -qF '$(3)' <<< "$$out" || \
 	{ echo "[FAIL] $(1): not denied$(if $(3), by $(3)): $$out"; exit 1; }
+# $(call denied,pod,image[,cause]): admission denies a pod running the image,
+# naming the cause when given
+denied = $(call refused,$(1),$(KUBECTL) run $(1) --image $(CLUSTER_REGISTRY)/$(2) -- sleep 3600,$(3))
+# An unsigned ephemeral container in a signed pod of its own, so a flow's
+# checks of pod-success see no ephemeral container
+DEBUG_UNSIGNED = $(KUBECTL) debug pod-debug-$(FLOW) --image $(CLUSTER_REGISTRY)/$(IMAGE_UNSIGNED) -- sleep 3600
+# A signed pod with an unsigned init container
+UNSIGNED_INIT = {"apiVersion": "v1", "spec": {"initContainers": [{"name": "init", \
+	"image": "$(CLUSTER_REGISTRY)/$(IMAGE_UNSIGNED)", "command": ["true"]}]}}
 # $(call admitted,pod,image): admission admits the pod and it runs
 admitted = $(KUBECTL) run $(1) -l flow=$(FLOW) --image $(CLUSTER_REGISTRY)/$(2) -- sleep 3600 && \
 	$(KUBECTL) wait --for=condition=Ready pod/$(1) --timeout=120s
@@ -91,12 +103,19 @@ policy: policy-reset
 		esac || exit 1; \
 	done
 
-# Unsigned must be denied by the policy, signed must be admitted and run.
+# Unsigned must be denied by the policy, as a container, an init container or,
+# unless EPHEMERAL says otherwise, an ephemeral container; signed must be
+# admitted and run.
 test: delete
 	$(call denied,pod-fail-$(FLOW),$(IMAGE_UNSIGNED),$(DENIED_BY))
+	$(call refused,pod-init-fail-$(FLOW),$(KUBECTL) run pod-init-fail-$(FLOW) \
+		--image $(CLUSTER_REGISTRY)/$(IMAGE_SIGNED) --overrides '$(UNSIGNED_INIT)' -- sleep 3600,$(DENIED_BY))
 	$(KUBECTL) create deployment deployment-fail-$(FLOW) --image $(CLUSTER_REGISTRY)/$(IMAGE_UNSIGNED) \
 		-- sleep 3600 2>&1 | grep 'denied the request'
 	$(call admitted,pod-success-$(FLOW),$(IMAGE_SIGNED))
+	$(call admitted,pod-debug-$(FLOW),$(IMAGE_SIGNED))
+	$(if $(filter denied,$(EPHEMERAL)),$(call refused,ephemeral container in pod-debug-$(FLOW),$(DEBUG_UNSIGNED),$(DENIED_BY)),\
+		$(DEBUG_UNSIGNED) >/dev/null && echo "[OK] $(FLOW): unsigned ephemeral container admitted")
 	$(KUBECTL) create deployment deployment-success-$(FLOW) --image $(CLUSTER_REGISTRY)/$(IMAGE_SIGNED) -- sleep 3600
 	$(KUBECTL) rollout status deployment/deployment-success-$(FLOW) --timeout=120s
 	@echo "[OK] $(FLOW): unsigned rejected, signed admitted and running"

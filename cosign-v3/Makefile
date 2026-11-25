@@ -12,7 +12,7 @@ TEST_IMAGE_SIGN := $(TEST_REGISTRY)/$(TEST_IMAGE)@$(TEST_DIGEST_LOCAL)
 EXAMPLES_DIR := examples
 SHELL := /bin/bash
 
-# Override to use locally-built cosign (e.g., COSIGN_BIN=./cosign-patched make test)
+# Override to use another cosign build (e.g., COSIGN_BIN=../build/cosign-main/cosign make test)
 COSIGN_BIN ?= cosign
 
 # set gencrt script (bring your own certificates) to yes to avoid generating new
@@ -141,7 +141,6 @@ e2e-local: check-tools registry certificates sign verify-local clean
 
 verify-local-native: save
 	@echo "==> Verifying local OCI layout with v3 bundle format..."
-	@echo "Note: Testing patched cosign's v3 bundle + --local-image support"
 	# Verify with cosign public key (no --new-bundle-format flag = auto-detect v3)
 	$(COSIGN_BIN) verify \
 		--local-image \

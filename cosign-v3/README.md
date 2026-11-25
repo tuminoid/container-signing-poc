@@ -5,8 +5,9 @@
 > **Cosign v4:** this flow uses `cosign generate` and `cosign attach signature`,
 > both removed on cosign `main` (`attach` is replaced by bundle-only `attach
 > bundle`). Run it with cosign v3.1.x or older via `COSIGN_BIN`. Verifying
-> already attached legacy signatures still works on `main`. For the v4 path see
-> [../cosign-v4-pre](../cosign-v4-pre/README.md).
+> legacy signatures is removed on `main` too (`--ca-roots` and
+> `--new-bundle-format` are gone), see `make tripwire-cosign-main`. For the v4
+> path see [../cosign-v4-pre](../cosign-v4-pre/README.md).
 
 This POC demonstrates using the Cosign v3 binary with BYO-PKI certificates
 for external signing. For BYO-PKI use cases (OpenSSL-generated keys), the
@@ -105,10 +106,11 @@ The workflow is the same as v2 for BYO-PKI compatibility:
 
 ## Verifying
 
-We verify with cosign using CA roots (same as v2):
+We verify with cosign using CA roots, as v2, with the legacy format selected:
 
 ```sh
 cosign verify \
+    --new-bundle-format=false \
     --ca-roots=examples/ca.crt \
     --certificate-identity-regexp '.*' \
     --certificate-oidc-issuer-regexp '.*' \
@@ -137,26 +139,14 @@ external tools like [Oras](../oras/README.md).
 - `make pack` calls `cosign save ...` and tarballs the OCI layer dump.
 - `make unpack` unpacks the tarball, and `cosign load ...` it back into registry.
 
-## Local Image Verification (Patched Cosign)
+## Local Image Verification
 
-Test `--local-image` verification with format auto-detection. This requires a
-patched cosign binary that fixes [sigstore/cosign#4621](https://github.com/sigstore/cosign/issues/4621),
-removing the mutual exclusivity between `--local-image` and `--new-bundle-format`.
-
-```sh
-# With system cosign (if patched)
-make e2e-local
-
-# With locally-built patched cosign
-make e2e-local COSIGN_BIN=/path/to/patched/cosign
-
-# Full test from repo root (builds and tests both v2 and v3)
-make local-image-test
-```
-
-The `verify-local` target saves the signed image to a local OCI layout and
-verifies it using `--local-image` WITHOUT specifying `--new-bundle-format`,
-testing that the patched cosign correctly auto-detects the signature format.
+`make e2e-local` saves the signed image to a local OCI layout and verifies it
+with `--local-image`, without `--new-bundle-format`, so cosign detects the
+legacy format itself. Before cosign 3.0.5
+([sigstore/cosign#4621](https://github.com/sigstore/cosign/issues/4621))
+`--local-image` could not be combined with `--new-bundle-format`, the v3
+default.
 
 ## Comparison with v2
 
@@ -164,7 +154,7 @@ testing that the patched cosign correctly auto-detects the signature format.
 |--------|---------------|---------------|
 | Binary Version | cosign v2.x | cosign v3.0.2+ |
 | BYO-PKI Signing | External signer + `cosign attach signature` | External signer + `cosign attach signature` |
-| Workflow | `cosign generate` → OpenSSL → `attach signature` | `cosign generate` → OpenSSL → `attach signature` |
+| Workflow | `cosign generate`, OpenSSL, `attach signature` | `cosign generate`, OpenSSL, `attach signature` |
 | Trust Model | CA-based certificate verification | CA-based certificate verification |
 | Verification | `cosign verify --ca-roots` | `cosign verify --new-bundle-format=false --ca-roots` |
 | Bundle Format | Legacy format (implicit) | Must disable new format: `--new-bundle-format=false` |
@@ -172,10 +162,11 @@ testing that the patched cosign correctly auto-detects the signature format.
 
 **Critical Notes:**
 
-1. **`cosign sign --key`:** This native v3 signing command only works with
-   cosign-generated keys (`cosign generate-key-pair`), not OpenSSL BYO-PKI
-   keys. For BYO-PKI use cases, the external signer workflow is required in
-   both v2 and v3.
+1. **`cosign sign --key`:** This native v3 signing command takes a cosign
+   key, so an OpenSSL BYO-PKI key must go through `cosign import-key-pair`
+   first, handing it to cosign. Keeping the key out of cosign takes the
+   external signer workflow here, or a `sigstore-kms-*` plugin or a
+   cosign-free bundle in [../cosign-v4-pre](../cosign-v4-pre/README.md).
 
 1. **`--new-bundle-format=false`:** Required for v3 verification when using
    `--ca-roots`. Without this flag, cosign v3 will error with "CA

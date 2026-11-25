@@ -31,11 +31,15 @@ cluster:
 	CLUSTER=$(CLUSTER) REGISTRY_PORT=$(REGISTRY_PORT) ZOT_PORT=$(ZOT_PORT) \
 		ZOT_IMAGE=$(ZOT_IMAGE) ./scripts/kind-cluster.sh
 
+# An ImageValidatingPolicy matching pods/ephemeralcontainers, which it needs to
+# see the ephemeral containers of kubectl debug, is ready only once the
+# reports controller may read that subresource.
 install-kyverno:
-	helm repo add kyverno https://kyverno.github.io/kyverno/ --force-update
-	helm upgrade --install kyverno kyverno/kyverno --version $(KYVERNO_CHART) \
+	helm upgrade --install kyverno kyverno --repo https://kyverno.github.io/kyverno/ \
+		--version $(KYVERNO_CHART) \
 		--kube-context kind-$(CLUSTER) -n kyverno --create-namespace --wait \
-		--set admissionController.container.extraArgs.allowInsecureRegistry=true
+		--set admissionController.container.extraArgs.allowInsecureRegistry=true \
+		--set-json 'reportsController.rbac.clusterRole.extraResources=[{"apiGroups": [""], "resources": ["pods/ephemeralcontainers"]}]'
 
 # The suite's cluster must run its Kyverno version
 version-check:

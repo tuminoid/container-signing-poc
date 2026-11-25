@@ -9,7 +9,7 @@ This is a container image signing and verification POC that demonstrates
 multiple approaches:
 
 1. **Signing**: Using Notation (with custom external signer plugin), Cosign v2
-   (external signer), Cosign v3 (native signing), or Cosign v4-pre (new
+   (external signer), Cosign v3 (external signer, v3 binary), or Cosign v4-pre (new
    Sigstore bundle format only)
 1. **Signature Transport**: Using Oras for moving signatures between registries
 1. **Admission-time Verification**: Using Kyverno admission controller
@@ -27,23 +27,23 @@ The POC follows defense-in-depth principle with two verification layers:
 ### E2E Testing (Top Level)
 
 ```bash
-# Run full Notation flow: sign → oras copy → kyverno verify
+# Run full Notation flow: sign -> oras copy -> kyverno verify
 make notation
 
-# Run Cosign v2 flow: sign → cosign save/load → kyverno verify
+# Run Cosign v2 flow: sign -> cosign save/load -> kyverno verify
 make cosign-v2
 
-# Run Cosign v3 flow: sign → cosign save/load → kyverno verify
+# Run Cosign v3 flow: sign -> cosign save/load -> kyverno verify
 make cosign-v3
 
 # Run both cosign flows
 make cosign
 
 # Run Cosign v4-pre: bundle flows standalone, then every bundle
-# Kyverno flow (sign → oras relocation → kyverno verify)
+# Kyverno flow (sign -> oras relocation -> kyverno verify)
 make cosign-v4-pre
 
-# Tripwire: cosign main at a pinned commit fails the legacy attach flow
+# Tripwire: cosign main at a pinned commit fails legacy attach and verify
 make tripwire-cosign-main
 
 # Clean all test artifacts
@@ -97,7 +97,7 @@ make load
 # Full test: start registry, generate certs, sign, verify
 make test
 
-# Sign image with v3 native signing (requires registry running)
+# Sign image: external signer + attach signature (requires registry running)
 make sign
 
 # Verify v3 signature
@@ -196,11 +196,8 @@ make test
 # Check system status
 make status
 
-# Clean test artifacts
+# Clean test artifacts and CRI-O configs
 make clean
-
-# Remove all CRI-O configs
-make clean-all
 ```
 
 ### Runtime Verification - Containerd (`containerd/`)
@@ -216,11 +213,8 @@ make test
 # Check system status
 make status
 
-# Clean test artifacts
+# Clean test artifacts, verifier and containerd config
 make clean
-
-# Remove all containerd hooks and configs
-make clean-all
 ```
 
 ## Architecture
@@ -256,10 +250,10 @@ plugin that:
 - Signatures are stored as OCI artifacts in registry
 - Can save/load entire image+signatures with `cosign save/load`
 
-**Cosign v3**: Uses native cosign signing:
+**Cosign v3**: The v2 legacy flow with the v3 binary:
 
-- Sign directly with `cosign sign --key`
-- Uses new v3 Sigstore bundle format
+- `cosign generate`, OpenSSL, `cosign attach signature`, as in v2
+- Verification needs `--new-bundle-format=false` with `--ca-roots`
 - Same CA-based verification as v2
 - Can verify v2 attached signatures (backward compatible)
 - Can save/load entire image+signatures with `cosign save/load`
@@ -383,8 +377,8 @@ Versions are in `notation/go.mod`. To build: `cd notation && make build`
 **Cosign/Sigstore**: Limited to the algorithms in sigstore's
 [algorithm registry](https://github.com/sigstore/sigstore/blob/main/pkg/signature/algorithm_registry.go):
 
-- RSA PKCS#1 v1.5 (2048/3072/4096) with SHA-256, and ECDSA P-256, P-384, P-521
-- RSA-PSS and SHA-512-with-RSA are excluded
+- RSA with SHA-256 only, so Notation's RSA-PSS with SHA-512 has no
+  Sigstore equivalent
 - All Sigstore services (Fulcio, Rekor) must support the same algorithms
 
 ### Transparency Logs
@@ -404,11 +398,11 @@ infrastructure:
 
 Each component has its own test cycle:
 
-1. **Notation**: Plugin build → registry setup → sign → verify
-1. **Cosign**: Registry setup → cert generation → sign → verify → save/load
-1. **Kyverno**: Kind cluster → install Kyverno → apply policies → test pod
+1. **Notation**: Plugin build -> registry setup -> sign -> verify
+1. **Cosign**: Registry setup -> cert generation -> sign -> verify -> save/load
+1. **Kyverno**: Kind cluster -> install Kyverno -> apply policies -> test pod
    creation
-1. **Runtime**: VM setup → install runtime → configure policies → test container
+1. **Runtime**: VM setup -> install runtime -> configure policies -> test container
    creation
 
 ### Expected Test Behavior
@@ -434,24 +428,22 @@ on the current context, other Kind clusters may share the machine.
 
 ```text
 .
-├── notation/              # Notation external signer plugin (Go)
-│   ├── cmd/notation-external-signer/  # Plugin source code
-│   └── examples/          # Example signing scripts
-├── cosign-v2/             # Cosign v2 signing (external signer + attach)
-├── cosign-v3/             # Cosign v3 native signing (new bundle format)
-├── cosign-v4-pre/         # Cosign v4-pre (v0.3 bundles only, registry:3)
-├── oras/                  # Oras signature copying (shell)
-├── kyverno/               # Kyverno admission controller policies
-│   ├── policy/            # ClusterPolicy and ImageValidatingPolicy files
-│   └── scripts/           # Kind cluster setup
-├── crio/                  # CRI-O runtime verification POC
-│   ├── config/            # Policy.json and registry configs
-│   ├── scripts/           # VM setup and testing
-│   └── manifests/         # Test pod definitions
-└── containerd/            # Containerd runtime verification POC
-    ├── scripts/           # VM setup, verifier plugin, testing
-    ├── config/            # (empty - config generated at runtime)
-    └── manifests/         # Test pod definitions
+|-- notation/              # Notation external signer plugin (Go)
+|   |-- cmd/notation-external-signer/  # Plugin source code
+|   `-- examples/          # Example signing scripts
+|-- cosign-v2/             # Cosign v2 signing (external signer + attach)
+|-- cosign-v3/             # Cosign v3 binary, same external signer flow as v2
+|-- cosign-v4-pre/         # Cosign v4-pre (v0.3 bundles only, registry:3)
+|-- oras/                  # Oras signature copying (shell)
+|-- kyverno/               # Kyverno admission controller policies
+|   |-- policy/            # ClusterPolicy and ImageValidatingPolicy files
+|   `-- scripts/           # Kind cluster setup
+|-- crio/                  # CRI-O runtime verification POC
+|   |-- config/            # Policy.json and registry configs
+|   |-- scripts/           # VM setup and testing
+|   `-- manifests/         # Test pod definitions
+`-- containerd/            # Containerd runtime verification POC
+    `-- scripts/           # VM setup, verifier plugin, testing
 ```
 
 ## Tips

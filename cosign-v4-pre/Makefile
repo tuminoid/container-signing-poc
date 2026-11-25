@@ -169,10 +169,12 @@ verify:
 	$(VERIFY) --allow-certificate-chain --trusted-root=$(EXAMPLES_DIR)/trusted-root.json \
 		$(TEST_IMAGE_SIGN)
 
-# Without --allow-certificate-chain cosign silently falls back to the legacy
-# path and reports "no signatures found". Asserted so we notice if that changes.
+# Without --allow-certificate-chain cosign never says the chain was the
+# problem: cosign 3.x falls back to the legacy path and reports "no signatures
+# found", cosign main, without that path, "no valid bundles exist in
+# registry". Asserted so we notice if that changes.
 verify-expect-fail:
-	@$(call refuse,verification without --allow-certificate-chain,no signatures found,\
+	@$(call refuse,verification without --allow-certificate-chain,no signatures found\|no valid bundles exist in registry,\
 		$(VERIFY) --trusted-root=$(EXAMPLES_DIR)/trusted-root.json $(TEST_IMAGE_SIGN))
 
 test: setup sign verify verify-expect-fail
@@ -283,7 +285,8 @@ v4-san-required: setup-nokey
 		{ echo "[FAIL] unexpected error: $$out"; exit 1; }
 	@echo "[OK] registered-ID-only leaf rejected: the signing certificate needs an email or URI SAN"
 
-# Air-gapped transport. cosign save/load does not carry bundles, oras does:
+# Air-gapped transport. cosign save/load carry bundles only in a layout that
+# cosign load alone reads (v4-save-load); oras uses a standard OCI layout:
 # copy the image with its referrers to an OCI layout, tar it, and import the
 # tarball into the destination registry. The digest is unchanged. For an index,
 # the referrers of its platform manifests come along too.

@@ -137,10 +137,17 @@ log "Verifying signature with: ${CA_CERT_PATH}"
 
 # A .json trust file is a Sigstore trusted root: verify bundles (cosign v4
 # format, OCI referrers), with the chain either in the bundle or in the root.
+# A root with timestamp authorities requires a signed timestamp and checks the
+# leaf at its time, as Kyverno does, so a timestamped bundle outlives its leaf.
 # Anything else is a root CA PEM: verify legacy attached signatures.
 if [[ "${CA_CERT_PATH}" == *.json ]]; then
     VERIFY_ARGS=(--trusted-root="${CA_CERT_PATH}" --allow-certificate-chain
         --insecure-ignore-tlog)
+    tsa="$(jq '.timestampAuthorities // [] | length' "${CA_CERT_PATH}")" ||
+        { log "ERROR: cannot read trusted root ${CA_CERT_PATH}"; exit 1; }
+    if [[ "${tsa}" -gt 0 ]]; then
+        VERIFY_ARGS+=(--use-signed-timestamps)
+    fi
 else
     VERIFY_ARGS=(--new-bundle-format=false --ca-roots="${CA_CERT_PATH}"
         --private-infrastructure)

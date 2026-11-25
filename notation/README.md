@@ -139,7 +139,7 @@ Example: [read-signature-from-file.sh](examples/read-signature-from-file.sh)
 # expectation is to have "payload.sig" with the raw signature present
 export EXTERNAL_CERT_CHAIN="$(pwd)/tmp/certificate_chain.pem"
 export EXTERNAL_SIGNER="$(pwd)/examples/read-signature-from-file.sh"
-notation sign --insecure-registry --id="foo" --plugin "script" \
+notation sign --insecure-registry --id="foo" --plugin "external-signer" \
     127.0.0.1:5000/busybox@sha256:e046063223f7eaafbfbc026aa3954d9a31b9f1053ba5db04a4f1fdc97abd8963
 ```
 
@@ -201,7 +201,7 @@ and successfully complete the signing.
    ```bash
     # notation verify <myRegistry>/<myRepo>@<digest> -v
     $ notation verify --insecure-registry \
-        127.0.0.1:5000/busybox:@sha256:d319b0e3e1745e504544e931cde012fc5470eba649acc8a7b3607402942e5db7
+        127.0.0.1:5000/busybox@sha256:d319b0e3e1745e504544e931cde012fc5470eba649acc8a7b3607402942e5db7
     Successfully verified signature for 127.0.0.1:5000/busybox@sha256:d319b0e3e1745e504544e931cde012fc5470eba649acc8a7b3607402942e5db7
    ```
 

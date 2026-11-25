@@ -9,7 +9,7 @@ TEST_IMAGE := alpine:3.20.3
 EXAMPLES_DIR := examples
 CERT_SCRIPT := ./scripts/gencrt.sh
 
-.PHONY: help setup run test test-v2 clean status check-vm gen-certs sign-image sign-image-v2 sign-image-bundle sign-image-v4 setup-registry install-hooks verify
+.PHONY: help setup run test test-v2 clean status check-vm gen-certs push-unsigned-test sign-image sign-image-v2 sign-image-bundle sign-image-v4 setup-registry install-hooks verify
 
 help:
 	@echo "Containerd Transfer Service BYO-PKI Signature Verification"
@@ -77,6 +77,20 @@ gen-certs:
 		rm -f $(EXAMPLES_DIR)/*.crt $(EXAMPLES_DIR)/*.key $(EXAMPLES_DIR)/*.pem $(EXAMPLES_DIR)/*.csr $(EXAMPLES_DIR)/*.conf $(EXAMPLES_DIR)/index* $(EXAMPLES_DIR)/serial*; \
 		$(CERT_SCRIPT); \
 	fi
+
+push-unsigned-test: setup-registry
+	@# Push unsigned image to primary registry (should be rejected)
+	@echo "==> Pushing unsigned test image to primary registry..."
+	@docker pull alpine:3.19 >/dev/null 2>&1
+	@docker tag alpine:3.19 $(TEST_REGISTRY_PRIMARY)/alpine:unsigned
+	@docker push $(TEST_REGISTRY_PRIMARY)/alpine:unsigned >/dev/null 2>&1
+	@echo "OK: Unsigned test image pushed to primary registry"
+	@# Push test image to secondary registry (should be allowed)
+	@echo "==> Pushing test image to secondary registry..."
+	@docker pull nginx:alpine >/dev/null 2>&1
+	@docker tag nginx:alpine $(TEST_REGISTRY_SECONDARY)/nginx:alpine
+	@docker push $(TEST_REGISTRY_SECONDARY)/nginx:alpine >/dev/null 2>&1
+	@echo "OK: Test image pushed to secondary registry"
 
 sign-image: sign-image-v2 sign-image-bundle
 	@echo "Images signed"
@@ -162,10 +176,13 @@ install-hooks:
 
 # The production shape on 127.0.0.1:5004, signed without cosign by
 # ../cosign-v4-pre: RSA 4096 leaf, leaf-only bundle, signed timestamp, CA chain
-# and TSA in the trusted root, plus the multi-arch images. Its registry and TSA
-# start afresh, so this runs, and the verifier is reinstalled, on every test.
+# and TSA in the trusted root, plus the multi-arch images, and then, with the
+# same PKI and TSA, the timestamped bundle of a leaf that has expired once
+# v4-leaf-expiry returns. Its registry and TSA start afresh, so this runs, and
+# the verifier is reinstalled, on every test.
 sign-image-v4:
 	$(MAKE) -C ../cosign-v4-pre clean v4-multiarch
+	$(MAKE) -C ../cosign-v4-pre v4-leaf-expiry -o setup-nokey -o trusted-root-tsa
 
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
@@ -187,7 +204,7 @@ run: check-vm
 		$(MAKE) setup-registry gen-certs sign-image; \
 		echo ""; \
 	fi
-	$(MAKE) sign-image-v4 install-hooks
+	$(MAKE) push-unsigned-test sign-image-v4 install-hooks
 	@if ! kubectl get nodes &> /dev/null; then \
 		echo "==> Initializing Kubernetes cluster (first run)..."; \
 		sudo ./scripts/init-k8s.sh; \
@@ -199,7 +216,7 @@ test: run
 
 test-v2:
 	@echo "==> Testing v2 signature verification..."
-	@$(MAKE) sign-image-v2
+	@$(MAKE) push-unsigned-test sign-image-v2
 	@./scripts/test-verification.sh
 
 status:
@@ -219,9 +236,8 @@ clean:
 	@echo "==> Removing hooks and certificates (requires sudo)..."
 	@sudo ./scripts/clean-all.sh
 	@echo "==> Removing registries and local certificates..."
-	-@docker stop containerd-registry-primary 2>/dev/null || true
-	-@docker rm containerd-registry-primary 2>/dev/null || true
-	-@docker stop containerd-registry-secondary 2>/dev/null || true
-	-@docker rm containerd-registry-secondary 2>/dev/null || true
+	-@docker rm -f containerd-registry-primary containerd-registry-secondary \
+		containerd-registry-bundle 2>/dev/null || true
+	$(MAKE) -C ../cosign-v4-pre clean
 	@rm -rf $(EXAMPLES_DIR)
 	@echo "OK: Clean complete"

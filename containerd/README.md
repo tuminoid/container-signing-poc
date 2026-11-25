@@ -95,19 +95,18 @@ flowchart TD
 
 **Note:** Cached images bypass verification entirely - this is a known limitation.
 
-Containerd config (`/etc/containerd/config.toml`):
+Containerd config (`/etc/containerd/config.toml`, from
+`scripts/containerd-config-template.toml`): the `bindir` verifier runs every
+executable in `bin_dir` on each Transfer Service pull, with `-name`,
+`-digest` and `-stdin-media-type`, and rejects the pull unless all exit 0:
 
 ```toml
 version = 3
 
-[plugins.'io.containerd.transfer.v1.local']
-  [[plugins.'io.containerd.transfer.v1.local'.unpack_config]]
-    platform = 'linux/amd64'
-    snapshotter = 'overlayfs'
-    [plugins.'io.containerd.transfer.v1.local'.unpack_config.verifier]
-      type = 'command'
-      command = '/opt/containerd/image-verifier/bin/verifier'
-      args = ['-name', '{src.name}', '-digest', '{src.digest}']
+[plugins.'io.containerd.image-verifier.v1.bindir']
+  bin_dir = '/opt/containerd/image-verifier/bin'
+  max_verifiers = 10
+  per_verifier_timeout = '10s'
 ```
 
 Verifier policy config (`/etc/containerd/image-verifier.conf`):
@@ -142,25 +141,37 @@ format in cosign v4, see [../cosign-v4-pre](../cosign-v4-pre/README.md)):
 REGISTRY_POLICY_BUNDLE=127\.0\.0\.1:5002|/etc/containerd/certs/registry-bundle-trusted-root.json
 ```
 
-`make test` signs `127.0.0.1:5002/alpine:3.20.3` into a bundle the way cosign
-v4 does (leaf plus intermediate in the bundle, root in the trusted root) and
-asserts the signed pod runs and an unsigned one is blocked by the verifier.
+`make test` signs `127.0.0.1:5000/alpine:3.20.3` with a legacy signature and
+`127.0.0.1:5002/alpine:3.20.3` into a bundle the way cosign v4 does (leaf
+plus intermediate in the bundle, root in the trusted root), and pushes an
+unsigned `alpine:unsigned` to both.
 
-It also runs `../cosign-v4-pre` `v4-multiarch` in the VM, which publishes on
-`127.0.0.1:5004` the production shape signed without cosign (RSA 4096 leaf,
-leaf-only bundle, signed timestamp) and two multi-arch copies, and installs
-its trusted root for that registry. Every image is removed from the node
-first, so each pod pulls, and each test requires the verifier's log line for
-the expected digest:
+It also runs `../cosign-v4-pre` `v4-multiarch` and `v4-leaf-expiry` in the
+VM, which publish on `127.0.0.1:5004` the production shape signed without
+cosign (RSA 4096 leaf, leaf-only bundle, signed timestamp), two multi-arch
+copies, and a timestamped bundle whose leaf has expired, and installs their
+trusted root for that registry. A trusted root with timestamp authorities
+makes the verifier require a signed timestamp and check the leaf at its time,
+as Kyverno does.
+
+Every image is removed from the node first, so each pod pulls, and each test
+but 12 requires the verifier's log line for the image, on the expected digest:
 
 | Test | Image | Result |
 | -- | -- | -- |
+| 1 | legacy signature on `127.0.0.1:5000` | runs, `PASSED` |
+| 2 | unsigned on `127.0.0.1:5000` | blocked, `no signatures found` |
+| 3 | `gcr.io` | blocked, policy `BLOCK` |
+| 4 | `127.0.0.1:5001` | runs, policy `ALLOW` |
+| 5 | bundle on `127.0.0.1:5002` | runs, `PASSED` |
+| 6 | unsigned on `127.0.0.1:5002` | blocked, `no signatures found` |
 | 7 | production shape, relocated | runs, `PASSED` |
 | 8 | index signed on the index, by tag | runs, `PASSED` on the index digest |
 | 9 | index signed on the platform manifests, by tag | blocked, `no signatures found` on the index digest |
 | 10 | index signed on the index, by linux/amd64 digest | blocked, `no signatures found` on the platform digest |
 | 11 | index signed on the platform manifests, by linux/amd64 digest | runs, `PASSED` on the platform digest |
 | 12 | unsigned, `use_local_image_pull = true` | runs, verifier never invoked |
+| 13 | timestamped bundle, leaf expired | runs, `PASSED` |
 
 The verifier checks the digest containerd passes: the index for a tag, the
 platform manifest for a platform digest. A bundle on the index alone covers
@@ -173,15 +184,6 @@ Service, so an unsigned image from a registry whose policy requires a bundle
 runs, and the verifier logs nothing. `container-encryption-poc` asserts that
 containerd decrypts only on the local pull path, so on one node image
 verification and decryption exclude each other.
-
-## Testing
-
-```bash
-kubectl apply -f manifests/signed-pod.yaml              # → Running
-kubectl apply -f manifests/unsigned-pod.yaml            # → ImagePullBackOff
-kubectl apply -f manifests/gcr-blocked-pod.yaml         # → ImagePullBackOff
-kubectl apply -f manifests/secondary-registry-pod.yaml  # → Running (no verification)
-```
 
 ## Key Differences from CRI-O
 

@@ -13,3 +13,6 @@
 index*
 serial*
 subca-serial*
+
+# Scratch output of the Makefile and scripts
+examples/*
