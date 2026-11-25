@@ -7,7 +7,7 @@ TEST_IMAGE := alpine:3.20.3
 EXAMPLES_DIR := examples
 CERT_SCRIPT := ./scripts/gencrt.sh
 
-.PHONY: help setup run test clean status check-vm gen-certs sign-image setup-registry install-policy verify sign-image-bundle-only
+.PHONY: help setup run test clean status check-vm gen-certs sign-image setup-registry install-policy verify sign-image-bundle-only copy-signed devkit-policy
 
 help:
 	@echo "CRI-O BYO-PKI Signature Verification"
@@ -154,6 +154,47 @@ sign-image-bundle-only: setup-registry gen-certs
 		--insecure-ignore-tlog --insecure-ignore-sct "$$ref" >/dev/null
 	@echo "OK: bundle-only image signed, verified by cosign"
 
+# The EPPKI C1 dev kit against containers/image, the library CRI-O verifies
+# with, through skopeo on the host: ../cosign-v2 signs a legacy signature with
+# the kit's valid container certificate, whose only SAN is a URI. policy.json
+# pki requires subjectEmail or subjectHostname and matches the certificate
+# against it, so no policy accepts it. DEVCERTS as in ../cosign-v4-pre
+# v4-devcerts.
+DEVKIT_DIR := $(EXAMPLES_DIR)/devcerts
+comma := ,
+# $(call devkit-pull,pki subject JSON,expected error)
+devkit-pull = jq -n --arg r $(CURDIR)/$(DEVKIT_DIR)/ca.crt --arg i $(CURDIR)/$(DEVKIT_DIR)/sub-ca.crt \
+		--argjson s '$(1)' '{default: [{type: "reject"}], transports: {docker: {"127.0.0.1:5003": [ \
+		{type: "sigstoreSigned", pki: ({caRootsPath: $$r, caIntermediatesPath: $$i} + $$s), \
+		signedIdentity: {type: "matchRepository"}}]}}}' > $(DEVKIT_DIR)/policy.json && \
+	if out=$$(skopeo copy --src-tls-verify=false --policy $(DEVKIT_DIR)/policy.json \
+		--registries.d config/registries.d docker://127.0.0.1:5003/alpine:3.20.3 \
+		dir:$(DEVKIT_DIR)/pulled 2>&1); then echo "[FAIL] pki $(1): accepted"; exit 1; fi; \
+	grep -qF '$(2)' <<< "$$out" || { echo "[FAIL] pki $(1): $$out"; exit 1; }; \
+	echo "[OK] pki $(1): refused, $(2)"
+
+devkit-policy:
+	$(MAKE) -C ../cosign-v2 clean test CERT_SCRIPT=../cosign-v4-pre/devcerts.sh
+	rm -rf $(DEVKIT_DIR)
+	mkdir -p $(DEVKIT_DIR)
+	cp ../cosign-v2/examples/ca.crt ../cosign-v2/examples/sub-ca.crt $(DEVKIT_DIR)/
+	@$(call devkit-pull,{},At least one of subjectEmail$(comma) subjectHostname must be specified)
+	@$(call devkit-pull,{"subjectHostname": "www.ericsson.com"},certificate is not valid for any names)
+	@$(call devkit-pull,{"subjectEmail": "ci-build@example.com"},not found (got []))
+	$(MAKE) -C ../cosign-v2 clean
+	@echo "[OK] no policy.json accepts the dev kit's URI-SAN-only certificate"
+
+# The signed image and its legacy signature, copied to 127.0.0.1:5003/copied.
+# The signature names 127.0.0.1:5003/alpine, which policy.json's
+# matchRepository accepts for that repository alone (test-verification.sh).
+COPIED := $(TEST_REGISTRY_PRIMARY)/copied
+
+copy-signed: sign-image-v2
+	d=$$(oras resolve --plain-http $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE)) && \
+	oras cp --from-plain-http --to-plain-http $(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE) $(COPIED):3.20.3 && \
+	oras cp --from-plain-http --to-plain-http $(TEST_REGISTRY_PRIMARY)/alpine:$${d/:/-}.sig \
+		$(COPIED):$${d/:/-}.sig
+
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
 	@cosign verify \
@@ -184,14 +225,14 @@ run: check-vm
 		$(MAKE) install-policy; \
 		echo ""; \
 	fi
-	$(MAKE) sign-image-bundle-only
+	$(MAKE) sign-image-bundle-only copy-signed
 	@./scripts/test-verification.sh
 
 test: run
 
 test-v2:
 	@echo "==> Testing v2 signature verification..."
-	@$(MAKE) sign-image-v2
+	@$(MAKE) copy-signed
 	@./scripts/test-verification.sh
 
 status:

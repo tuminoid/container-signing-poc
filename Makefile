@@ -36,11 +36,13 @@ cosign: cosign-v2 cosign-v3
 # then the Kyverno flows, which run the remaining cosign-v4-pre targets as
 # their signing step. Separate make runs, as each flow starts from fresh
 # registries and certificates; each Kyverno flow runs setup, which empties the
-# registries and installs the flow's Kyverno version.
+# registries and installs the flow's Kyverno version. DEVCERTS, the extracted
+# EPPKI C1 dev kit, adds its flow.
 # $(call kyverno-flow,flow file[,variables])
 kyverno-flow = make -C $(KYVERNO_DIR) -f $(1) $(2)
 
 cosign-v4-pre:
+	$(if $(DEVCERTS),make -C $(COSIGN_V4_PRE_DIR) devkit-check)
 	make -C $(COSIGN_V4_PRE_DIR) test
 	make -C $(COSIGN_V4_PRE_DIR) v4-external-plugin
 	make -C $(COSIGN_V4_PRE_DIR) v4-external-offline
@@ -58,17 +60,25 @@ cosign-v4-pre:
 	$(call kyverno-flow,bundle-shapes.mk)
 	$(call kyverno-flow,bundle-multiarch.mk)
 	$(call kyverno-flow,bundle-expiry.mk)
+	$(call kyverno-flow,bundle-binding.mk)
+	$(if $(DEVCERTS),$(call kyverno-flow,bundle-devcerts.mk))
 	make -C $(KYVERNO_DIR) api-versions
 
 # Tripwire: cosign main at a pinned commit, built into build/cosign-main, has
 # no attach signature command, and the legacy attach flow of cosign-v2 fails
 # there for it. A legacy signature attached by the installed cosign does not
 # verify there either: --ca-roots is gone, and with a trusted root cosign main
-# looks for bundles only. Refresh the pin to see whether that still holds.
+# looks for bundles only, where the installed cosign 3.x, given the same bundle
+# flags, falls back to the legacy signature and verifies it. Refresh the pin
+# to see whether that still holds.
 COSIGN_MAIN_COMMIT := ab26c80dd5737351ebdeda7e52ba1f568b26938e
 COSIGN_MAIN_DIR := $(CURDIR)/build/cosign-main
 # The image cosign-v2 signs, pinned there
 LEGACY_REF := 127.0.0.1:5003/alpine@$(shell sed -n 's/^TEST_DIGEST_LOCAL := //p' $(COSIGN_V2_DIR)/Makefile)
+# $(call bundle-verify,cosign): verification of a bundle against the CA chain
+bundle-verify = $(1) verify --trusted-root=$(COSIGN_MAIN_DIR)/trusted-root.json --allow-certificate-chain \
+	--certificate-identity-regexp '.*' --certificate-oidc-issuer-regexp '.*' \
+	--insecure-ignore-tlog --insecure-ignore-sct $(LEGACY_REF)
 
 tripwire-cosign-main:
 	GOBIN=$(COSIGN_MAIN_DIR) go install github.com/sigstore/cosign/v3/cmd/cosign@$(COSIGN_MAIN_COMMIT)
@@ -86,17 +96,16 @@ tripwire-cosign-main:
 		echo "[FAIL] legacy verification passes on cosign main"; exit 1; fi
 	@grep -q 'unknown flag: --ca-roots' $(COSIGN_MAIN_DIR)/legacy-verify.log || \
 		{ echo "[FAIL] unexpected failure, see $(COSIGN_MAIN_DIR)/legacy-verify.log"; exit 1; }
+	cat $(COSIGN_V2_DIR)/examples/sub-ca.crt $(COSIGN_V2_DIR)/examples/ca.crt > $(COSIGN_MAIN_DIR)/ca-chain.pem
 	cosign trusted-root create --out=$(COSIGN_MAIN_DIR)/trusted-root.json \
-		--fulcio="url=https://private.local,certificate-chain=$(COSIGN_V2_DIR)/examples/ca.crt"
-	@if out=$$($(COSIGN_MAIN_DIR)/cosign verify --trusted-root=$(COSIGN_MAIN_DIR)/trusted-root.json \
-		--allow-certificate-chain \
-		--certificate-identity-regexp '.*' --certificate-oidc-issuer-regexp '.*' \
-		--insecure-ignore-tlog --insecure-ignore-sct $(LEGACY_REF) 2>&1); then \
+		--fulcio="url=https://private.local,certificate-chain=$(COSIGN_MAIN_DIR)/ca-chain.pem"
+	$(call bundle-verify,cosign) >/dev/null
+	@if out=$$($(call bundle-verify,$(COSIGN_MAIN_DIR)/cosign) 2>&1); then \
 		echo "[FAIL] cosign main verifies a legacy signature against a trusted root"; exit 1; fi; \
 	grep -q 'no valid bundles exist in registry' <<< "$$out" || \
 		{ echo "[FAIL] unexpected failure: $$out"; exit 1; }
 	make -C $(COSIGN_V2_DIR) clean
-	@echo "[OK] cosign main $(COSIGN_MAIN_COMMIT): legacy attach and legacy verification are gone"
+	@echo "[OK] cosign main $(COSIGN_MAIN_COMMIT): legacy attach and legacy verification are gone, cosign 3.x falls back to legacy"
 
 clean:
 	make -C $(NOTATION_DIR) clean

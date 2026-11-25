@@ -27,6 +27,10 @@ mkdir -p "${CA_CERT_DIR}"
 cp "${SCRIPT_DIR}/../examples/ca.crt" "${CA_CERT_DIR}/registry-primary-ca.crt"
 cp "${SCRIPT_DIR}/../examples/trusted-root.json" "${CA_CERT_DIR}/registry-bundle-trusted-root.json"
 cp "${SCRIPT_DIR}/../../cosign-v4-pre/examples/trusted-root-tsa.json" "${CA_CERT_DIR}/registry-v4-trusted-root.json"
+# ../cosign-v4-pre v4-devcerts, when run: the EPPKI C1 dev kit's root and SubCA
+DEVKIT_ROOT="${SCRIPT_DIR}/../../cosign-v4-pre/examples/devcerts/trusted-root.json"
+rm -f "${CA_CERT_DIR}/registry-devcerts-trusted-root.json"
+[[ ! -f "${DEVKIT_ROOT}" ]] || cp "${DEVKIT_ROOT}" "${CA_CERT_DIR}/registry-devcerts-trusted-root.json"
 
 # Install containerd config from template
 echo "Installing containerd configuration from template..."
@@ -61,7 +65,21 @@ REGISTRY_POLICY_GCR=gcr\.io|BLOCK
 
 # Default action for unknown registries: "allow" or "deny"
 VERIFY_DEFAULT_ACTION=allow
+
+# The test registries serve plain http; oras fetches bundles from them
+VERIFY_PLAIN_HTTP=127\.0\.0\.1:500[0-4]/
 CONFEOF
+
+# ../cosign-v4-pre devcerts/ repositories, when v4-devcerts ran - REQUIRE a
+# bundle by the EPPKI C1 dev kit, its SAN pinned. The verifier tries policies
+# in alphabetical order: DEVCERTS_OTHER, then DEVKIT, then V4.
+if [[ -f "${CA_CERT_DIR}/registry-devcerts-trusted-root.json" ]]; then
+    {
+        echo 'REGISTRY_POLICY_DEVKIT=127\.0\.0\.1:5004/devcerts/|/etc/containerd/certs/registry-devcerts-trusted-root.json|https://www.ericsson.com/en/about-us/security/pki'
+        # devcerts/other-san pins another SAN, for test 21
+        echo 'REGISTRY_POLICY_DEVCERTS_OTHER=127\.0\.0\.1:5004/devcerts/other-san[:@]|/etc/containerd/certs/registry-devcerts-trusted-root.json|https://signing.invalid'
+    } >> /etc/containerd/image-verifier.conf
+fi
 
 chmod 644 /etc/containerd/image-verifier.conf
 

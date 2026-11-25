@@ -112,13 +112,14 @@ flowchart TD
 
 ## Testing
 
-The test suite runs 5 tests at CRI level and 2 at Kubernetes level:
+The test suite runs four tests at CRI level and two at Kubernetes level:
 
 ```bash
 # CRI level tests
 sudo crictl pull 127.0.0.1:5003/alpine:3.20.3    # Test 1: signed -> OK
 sudo crictl pull 127.0.0.1:5003/alpine:unsigned  # Test 2: unsigned -> FAIL
 sudo crictl pull 127.0.0.1:5003/bundle-only:3.20.3  # Test 5: bundle only -> FAIL
+sudo crictl pull 127.0.0.1:5003/copied:3.20.3   # Test 6: other repository -> FAIL
 
 # Kubernetes level tests
 kubectl apply -f manifests/signed-pod.yaml       # Test 3: -> Running
@@ -131,6 +132,21 @@ Sigstore bundle alone, without cosign, through
 that `cosign verify` accepts it. CRI-O must fail the pull with
 `A signature was required, but no signature exists`, as for an unsigned
 image; a CRI-O that reads bundles fails the test.
+
+Test 6: `make copy-signed` copies the signed image and its legacy signature
+to `127.0.0.1:5003/copied`. The signature names `127.0.0.1:5003/alpine`, and
+`signedIdentity: matchRepository` accepts it for that repository alone, so
+the pull fails with `Signature for identity "127.0.0.1:5003/alpine" is not
+accepted`. A bundle names no repository to match, see
+`../cosign-v4-pre` `v4-repo-binding`.
+
+`make devkit-policy DEVCERTS=<absolute path>`, on the host with skopeo, which
+evaluates `policy.json` with the same containers/image library as CRI-O:
+`../cosign-v2` signs with the EPPKI C1 dev kit's valid container certificate,
+whose only SAN is a URI. `pki` requires `subjectEmail` or `subjectHostname`,
+and matches the certificate against it, so the policy without either is
+invalid, and with either the signature is refused; no `policy.json` accepts
+the kit's certificates.
 
 **Note:** While the policy configures 4 scenarios (primary registry verify,
 secondary registry allow, gcr.io block, default allow), the test suite focuses

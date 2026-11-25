@@ -16,6 +16,9 @@ CLUSTER_REGISTRY = $(shell docker inspect -f \
 POLICY_DIR := policy
 # mutateDigest and verifyDigest in policies that have the __DIGEST__ setting
 DIGEST ?= true
+# The signer identity in policies that have __SUBJECT__: the URI SAN of the
+# cosign-v4-pre leaves
+SUBJECT ?= https://signing.example.com
 # Text the denial of the unsigned pod must contain, naming the policy
 DENIED_BY ?=
 # What admission does to an unsigned kubectl debug ephemeral container,
@@ -87,20 +90,24 @@ policy-reset:
 			jq -e '$(NO_POLICY_WEBHOOKS)' >/dev/null && exit 0; \
 		sleep 2; done; echo "[FAIL] policy webhooks remain"; exit 1
 
-# Apply each policy with the __TRUST__ line replaced by the TRUST file,
-# indented alike, and __DIGEST__ by DIGEST; wait until each is ready.
+# Apply each policy file with the __TRUST__ lines replaced by the TRUST file,
+# indented alike, __DIGEST__ by DIGEST and __SUBJECT__ by SUBJECT; wait until
+# each policy in it is ready.
 policy: policy-reset
 	$(MAKE) -f Makefile version-check SUITE=$(SUITE)
 	for f in $(POLICIES); do \
-		r=$$(awk -v f="$(TRUST)" -v d="$(DIGEST)" '/^ *__TRUST__$$/ { \
+		r=$$(awk -v f="$(TRUST)" -v d="$(DIGEST)" -v s="$(SUBJECT)" '/^ *__TRUST__$$/ { \
 			ind = substr($$0, 1, index($$0, "_") - 1); \
 			while ((getline l < f) > 0) print ind l; close(f); next } \
-			{ gsub(/__DIGEST__/, d); print }' $(POLICY_DIR)/$$f | \
+			{ gsub(/__DIGEST__/, d); if ((i = index($$0, "__SUBJECT__")) > 0) \
+				$$0 = substr($$0, 1, i - 1) s substr($$0, i + 11); print }' $(POLICY_DIR)/$$f | \
 			$(KUBECTL) apply -o name -f - $(NO_DEPRECATION)) || exit 1; \
-		case "$$r" in \
-		clusterpolicy.*) $(KUBECTL) wait --for=condition=Ready "$$r" --timeout=120s ;; \
-		*) $(KUBECTL) wait --for=jsonpath='{.status.conditionStatus.ready}'=true "$$r" --timeout=120s ;; \
-		esac || exit 1; \
+		for n in $$r; do \
+			case "$$n" in \
+			clusterpolicy.*) $(KUBECTL) wait --for=condition=Ready "$$n" --timeout=120s ;; \
+			*) $(KUBECTL) wait --for=jsonpath='{.status.conditionStatus.ready}'=true "$$n" --timeout=120s ;; \
+			esac || exit 1; \
+		done; \
 	done
 
 # Unsigned must be denied by the policy, as a container, an init container or,

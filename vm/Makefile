@@ -3,6 +3,7 @@
 # qemu-utils, cloud-image-utils and /dev/kvm; no root.
 #
 #   make crio | containerd     # VM up, copy dir and ../cosign-v4-pre, setup, reboot, test
+#   make containerd DEVCERTS=/abs/kit  # also copy the EPPKI C1 dev kit in, test it too
 #   make stop-crio | stop-containerd
 #   make clean                 # stop both, delete build/vm
 
@@ -14,7 +15,15 @@ IMAGE_URL := https://cloud-images.ubuntu.com/noble/20261017/noble-server-cloudim
 IMAGE_SHA256 := 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
 IMAGE := $(BUILD)/noble.img
 
+# containerd with DEVCERTS: the kit goes into a fresh directory per run, and
+# the test signs with it
+DEVKIT_TEST = $(MAKE) -C ../cosign-v4-pre devkit-check && set -o pipefail && \
+	tar -C "$(DEVCERTS)" -cf - $$($(MAKE) -s --no-print-directory -C ../cosign-v4-pre devkit-files) | $(call VM,$@) ssh \
+	'd=$$(mktemp -d) && tar -xf - -C "$$d" && cd ~/$@ && make test DEVCERTS="$$d"'
+
 PORT_crio := 2220
+RUNTIME_crio := crio
+RUNTIME_containerd := containerd
 PORT_containerd := 2221
 VM = VM_DIR=$(BUILD)/$(1) VM_NAME=signing-$(1) VM_PORT=$(PORT_$(1)) \
 	VM_BASE=$(IMAGE) VM_MEM=6144 ./vm.sh
@@ -49,7 +58,9 @@ crio containerd: check-tools $(IMAGE)
 	-$(call VM,$@) ssh 'sudo reboot'
 	sleep 15
 	$(call VM,$@) wait
-	$(call VM,$@) ssh 'cd ~/$@ && make test'
+	@# sshd comes up before the runtime the test needs
+	$(call VM,$@) ssh 'systemctl is-system-running --wait >/dev/null; systemctl is-active --quiet $(RUNTIME_$@)'
+	$(if $(and $(DEVCERTS),$(filter containerd,$@)),$(DEVKIT_TEST),$(call VM,$@) ssh 'cd ~/$@ && make test')
 	@echo "[OK] $@ runtime verification passed in the VM"
 
 stop-crio stop-containerd: stop-%:

@@ -131,7 +131,7 @@ Policy enforces **6 scenarios**:
 - Default: ALLOW
 
 Verifier is a bash script that validates signatures using
-[sigstore/cosign](https://github.com/sigstore/cosign).
+[sigstore/cosign](https://github.com/sigstore/cosign), and oras for bundles.
 
 The trust path in a policy is either a root CA PEM, verifying legacy attached
 signatures, or a Sigstore trusted root `.json`, verifying bundles (the only
@@ -146,13 +146,27 @@ REGISTRY_POLICY_BUNDLE=127\.0\.0\.1:5002|/etc/containerd/certs/registry-bundle-t
 plus intermediate in the bundle, root in the trusted root), and pushes an
 unsigned `alpine:unsigned` to both.
 
-It also runs `../cosign-v4-pre` `v4-multiarch` and `v4-leaf-expiry` in the
-VM, which publish on `127.0.0.1:5004` the production shape signed without
-cosign (RSA 4096 leaf, leaf-only bundle, signed timestamp), two multi-arch
-copies, and a timestamped bundle whose leaf has expired, and installs their
+It also runs `../cosign-v4-pre` `v4-multiarch`, `v4-leaf-expiry` and
+`v4-legacy-fallback` in the VM, which publish on `127.0.0.1:5004` the
+production shape signed without cosign (RSA 4096 leaf, leaf-only bundle,
+signed timestamp), two multi-arch copies, a timestamped bundle whose leaf has
+expired, and an image with a legacy signature alone, and installs their
 trusted root for that registry. A trusted root with timestamp authorities
 makes the verifier require a signed timestamp and check the leaf at its time,
 as Kyverno does.
+
+Without a bundle on the image `cosign verify` 3.x verifies a legacy signature
+instead, though `--trusted-root` and `--allow-certificate-chain` ask for
+bundles, and `--use-signed-timestamps` does not require a timestamp on that
+path. For a trusted root policy the verifier therefore lists the image's
+bundle referrers with oras and verifies each against the digest with `cosign
+verify-blob-attestation`, which has no legacy path, and refuses an image with
+none (tests 6, 9, 10, 14) or with none for its digest (test 15). A root CA
+policy keeps `cosign verify` of legacy signatures. oras reaches a registry
+over plain http only when `VERIFY_PLAIN_HTTP` matches it, and takes
+credentials from `VERIFY_REGISTRY_CONFIG`, as containerd runs the verifier
+without `HOME`. A bundle larger than `VERIFY_MAX_BUNDLE_BYTES`, 1 MiB by
+default, is refused before cosign sees it.
 
 Every image is removed from the node first, so each pod pulls, and each test
 but 12 requires the verifier's log line for the image, on the expected digest:
@@ -164,14 +178,47 @@ but 12 requires the verifier's log line for the image, on the expected digest:
 | 3 | `gcr.io` | blocked, policy `BLOCK` |
 | 4 | `127.0.0.1:5001` | runs, policy `ALLOW` |
 | 5 | bundle on `127.0.0.1:5002` | runs, `PASSED` |
-| 6 | unsigned on `127.0.0.1:5002` | blocked, `no signatures found` |
+| 6 | unsigned on `127.0.0.1:5002` | blocked, `no Sigstore bundle` |
 | 7 | production shape, relocated | runs, `PASSED` |
 | 8 | index signed on the index, by tag | runs, `PASSED` on the index digest |
-| 9 | index signed on the platform manifests, by tag | blocked, `no signatures found` on the index digest |
-| 10 | index signed on the index, by linux/amd64 digest | blocked, `no signatures found` on the platform digest |
+| 9 | index signed on the platform manifests, by tag | blocked, `no Sigstore bundle` on the index digest |
+| 10 | index signed on the index, by linux/amd64 digest | blocked, `no Sigstore bundle` on the platform digest |
 | 11 | index signed on the platform manifests, by linux/amd64 digest | runs, `PASSED` on the platform digest |
 | 12 | unsigned, `use_local_image_pull = true` | runs, verifier never invoked |
 | 13 | timestamped bundle, leaf expired | runs, `PASSED` |
+| 14 | legacy signature alone, same PKI, on the bundle registry | blocked, `no Sigstore bundle` |
+| 15 | a valid bundle of another digest attached | blocked, `provided artifact digest does not match` |
+| 16 | EPPKI C1 dev kit, valid certificate | runs, `PASSED` |
+| 17 | dev kit, certificate its CRL revokes | runs, `PASSED`: no CRL is read |
+| 18 | dev kit, expired certificate | blocked, `failed to verify leaf certificate` |
+| 19 | dev kit, certificate of the revoked SubCA, not in the trusted root | blocked, `failed to verify leaf certificate` |
+| 20 | the same, with the revoked SubCA in the bundle | blocked, `--trusted-root only supported with --new-bundle-format` |
+| 21 | dev kit, valid certificate, under a policy pinning another SAN | blocked, `failed to verify certificate identity` |
+
+Tests 16 to 21 run with the extracted dev kit, `make -C ../vm containerd
+DEVCERTS=<absolute path>`, which checks it on the host and copies the files
+the tests read into a fresh directory in the VM; its policy covers
+`127.0.0.1:5004/devcerts/` with the kit's root and `SubCA_C1_dev_2`, and pins
+the kit's SAN with an empty issuer, a third field of the policy line:
+
+```bash
+REGISTRY_POLICY_DEVKIT=127\.0\.0\.1:5004/devcerts/|/etc/containerd/certs/registry-devcerts-trusted-root.json|https://www.ericsson.com/en/about-us/security/pki
+```
+
+Without that field a trusted root policy accepts any identity under its CAs.
+Policies are tried in alphabetical order of their names, the first match
+deciding, so a narrower pattern needs a name that sorts first.
+
+The verifier passes `--allow-certificate-chain`, taking the intermediate from
+the bundle, only when every authority of the trusted root is a root
+certificate alone, as for `127.0.0.1:5002`. A trusted root that names its
+intermediates allows those only: leaving a SubCA out of it then revokes the
+SubCA, where with `--allow-certificate-chain` a bundle carrying that SubCA
+would chain to the shared root and pass (test 20). cosign reports the refusal
+as `--trusted-root only supported with --new-bundle-format`. Removing the
+last intermediate turns the trusted root into root certificates alone, and
+the verifier takes the chain from the bundle again: that is no revocation;
+remove the root, or block the registry.
 
 The verifier checks the digest containerd passes: the index for a tag, the
 platform manifest for a platform digest. A bundle on the index alone covers

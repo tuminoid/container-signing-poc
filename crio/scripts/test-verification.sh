@@ -109,6 +109,22 @@ else
 fi
 echo ""
 
+# Test 6: the signed image and its legacy signature copied to another
+# repository (make copy-signed). The signature names 127.0.0.1:5003/alpine,
+# and matchRepository accepts it for that repository alone; a bundle names
+# none, see ../cosign-v4-pre v4-repo-binding.
+echo "==> Test 6: Pull the signed image copied to another repository (should fail)"
+echo "   Image: 127.0.0.1:5003/copied:3.20.3"
+if out="$(sudo crictl pull 127.0.0.1:5003/copied:3.20.3 2>&1)"; then
+    fail "ERROR: Copied image pull SUCCEEDED: the signature is not bound to its repository"
+elif grep -qE 'Signature for identity \\?"127\.0\.0\.1:5003/alpine\\?" is not accepted' <<< "${out}"; then
+    echo "[OK] OK: Copied image pull FAILED: the signature names 127.0.0.1:5003/alpine"
+else
+    fail "ERROR: Copied image pull failed for another reason"
+    echo "${out}"
+fi
+echo ""
+
 # Test 3 & 4: Kubernetes pod tests (if k8s is available)
 if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
     # Ensure node is Ready before running pod tests
@@ -128,7 +144,7 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
 
     # Clean up any existing pods, and drop the image test 1 pulled, so the
     # pod pulls it and CRI-O verifies it again
-    kubectl delete pod signed-alpine-crio --ignore-not-found --wait >/dev/null 2>&1 || true
+    kubectl delete pod signed-alpine-crio --ignore-not-found --wait >/dev/null
     sudo crictl rmi 127.0.0.1:5003/alpine:3.20.3 >/dev/null 2>&1 || true
     if ! left="$(sudo crictl images -q 127.0.0.1:5003/alpine:3.20.3)" || [[ -n "${left}" ]]; then
         fail "ERROR: 127.0.0.1:5003/alpine:3.20.3 not shown gone from the node, the pod might not pull it"
@@ -171,8 +187,7 @@ if command -v kubectl &> /dev/null && kubectl get nodes &> /dev/null 2>&1; then
     echo ""
 
     # Clean up any existing pods
-    kubectl delete pod unsigned-alpine-crio --wait=false >/dev/null 2>&1 || true
-    sleep 2
+    kubectl delete pod unsigned-alpine-crio --ignore-not-found --wait >/dev/null
 
     if kubectl apply -f manifests/unsigned-pod.yaml 2>&1 | tee /tmp/crio-test-k8s-unsigned.log; then
         echo "Waiting for pod to fail..."

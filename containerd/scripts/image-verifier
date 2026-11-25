@@ -6,9 +6,11 @@
 # CONFIGURATION: /etc/containerd/image-verifier.conf
 #
 # Format (one policy per line):
-#   REGISTRY_POLICY_NAME=registry_pattern|trust_path
+#   REGISTRY_POLICY_NAME=registry_pattern|trust_path[|identity]
 #   trust_path is a root CA PEM (legacy signatures) or a Sigstore trusted
-#   root .json (bundles)
+#   root .json (bundles). identity, for a trusted root, is the signing
+#   certificate's SAN, matched exactly with an empty OIDC issuer, as a private
+#   PKI certificate has none; without it any identity is accepted
 #
 # Example:
 #   REGISTRY_POLICY_INTERNAL=registry.internal.corp:5000|/etc/containerd/certs/internal-ca.crt
@@ -19,6 +21,12 @@
 # Default behavior (no matching policy): VERIFY_DEFAULT_ACTION
 #   VERIFY_DEFAULT_ACTION=allow  - Allow images from unknown registries
 #   VERIFY_DEFAULT_ACTION=deny   - Deny images from unknown registries
+#
+# VERIFY_REGISTRY_CONFIG: registry credentials oras reads to fetch bundles,
+# default /etc/containerd/image-verifier-registries.json, may be absent
+# VERIFY_PLAIN_HTTP: registry pattern oras reaches over plain http, default
+# none
+# VERIFY_MAX_BUNDLE_BYTES: largest bundle fetched, default 1 MiB
 
 set -euo pipefail
 
@@ -84,19 +92,21 @@ DEFAULT_ACTION="${VERIFY_DEFAULT_ACTION:-allow}"
 # Find matching registry policy
 MATCHED_POLICY=""
 CA_CERT_PATH=""
+IDENTITY=""
 
 # Iterate through all environment variables starting with REGISTRY_POLICY_
 for var in $(compgen -e | grep '^REGISTRY_POLICY_' || true); do
     policy_value="${!var}"
 
     # Parse policy: "registry_pattern|ca_cert_path" or "registry_pattern|ALLOW" or "registry_pattern|BLOCK"
-    IFS='|' read -r registry_pattern ca_path <<< "${policy_value}"
+    IFS='|' read -r registry_pattern ca_path identity <<< "${policy_value}"
 
     # Check if image name matches this registry pattern
     if [[ "${IMAGE_NAME}" =~ ^${registry_pattern} ]]; then
         log "Matched policy: ${var} (pattern: ${registry_pattern})"
         MATCHED_POLICY="${var}"
         CA_CERT_PATH="${ca_path}"
+        IDENTITY="${identity}"
         break
     fi
 done
@@ -113,6 +123,14 @@ if [[ -z "${MATCHED_POLICY}" ]]; then
         log "[OK] DEFAULT ACTION: ALLOW - Allowing image from unknown registry"
         exit 0
     fi
+fi
+
+# A pinned identity is checked on bundles only; refuse it where it would be
+# ignored rather than accept any signer
+if [[ -n "${IDENTITY}" && "${CA_CERT_PATH}" != *.json ]]; then
+    log "ERROR: ${MATCHED_POLICY} pins an identity, which only a trusted root .json policy checks"
+    echo "Internal error: invalid policy ${MATCHED_POLICY}"
+    exit 1
 fi
 
 # Handle special policy keywords: ALLOW and BLOCK
@@ -135,31 +153,93 @@ fi
 
 log "Verifying signature with: ${CA_CERT_PATH}"
 
-# A .json trust file is a Sigstore trusted root: verify bundles (cosign v4
-# format, OCI referrers), with the chain either in the bundle or in the root.
-# A root with timestamp authorities requires a signed timestamp and checks the
-# leaf at its time, as Kyverno does, so a timestamped bundle outlives its leaf.
-# Anything else is a root CA PEM: verify legacy attached signatures.
+# A .json trust file is a Sigstore trusted root: verify the image's bundles,
+# its OCI referrers, the chain either in the bundle or in the root. cosign
+# verify would fall back to legacy signatures when it finds no bundle, so each
+# bundle is fetched and verified against the digest with cosign
+# verify-blob-attestation, which has no legacy path. A root with timestamp
+# authorities requires a signed timestamp and checks the leaf at its time, as
+# Kyverno does, so a timestamped bundle outlives its leaf. A root whose
+# authorities are root certificates alone takes the intermediate from the
+# bundle; one that names intermediates allows those only, so a bundle carrying
+# another intermediate under the same root, of a SubCA left out to revoke it,
+# is refused, as in Kyverno.
 if [[ "${CA_CERT_PATH}" == *.json ]]; then
-    VERIFY_ARGS=(--trusted-root="${CA_CERT_PATH}" --allow-certificate-chain
-        --insecure-ignore-tlog)
-    tsa="$(jq '.timestampAuthorities // [] | length' "${CA_CERT_PATH}")" ||
-        { log "ERROR: cannot read trusted root ${CA_CERT_PATH}"; exit 1; }
+    if ! tsa="$(jq '.timestampAuthorities // [] | length' "${CA_CERT_PATH}")" ||
+        ! roots_only="$(jq 'all(.certificateAuthorities[]; (.certChain.certificates | length) == 1)' "${CA_CERT_PATH}")"; then
+        log "ERROR: cannot read trusted root ${CA_CERT_PATH}"
+        exit 1
+    fi
+    if [[ -n "${IDENTITY}" ]]; then
+        IDENTITY_ARGS=(--certificate-identity "${IDENTITY}" --certificate-oidc-issuer-regexp '^$')
+    else
+        IDENTITY_ARGS=(--certificate-identity-regexp '.*' --certificate-oidc-issuer-regexp '.*')
+    fi
+    VERIFY_ARGS=(--trusted-root="${CA_CERT_PATH}" "${IDENTITY_ARGS[@]}"
+        --insecure-ignore-tlog --insecure-ignore-sct
+        --type https://sigstore.dev/cosign/sign/v1
+        --digestAlg sha256 --digest "${IMAGE_DIGEST#sha256:}")
     if [[ "${tsa}" -gt 0 ]]; then
         VERIFY_ARGS+=(--use-signed-timestamps)
     fi
-else
-    VERIFY_ARGS=(--new-bundle-format=false --ca-roots="${CA_CERT_PATH}"
-        --private-infrastructure)
+    if [[ "${roots_only}" == true ]]; then
+        VERIFY_ARGS+=(--allow-certificate-chain)
+    fi
+    # containerd runs the verifier without HOME, where oras looks for registry
+    # credentials, so name them
+    ORAS_OPTS=(--registry-config "${VERIFY_REGISTRY_CONFIG:-/etc/containerd/image-verifier-registries.json}")
+    if [[ -n "${VERIFY_PLAIN_HTTP:-}" && "${IMAGE_NAME}" =~ ^${VERIFY_PLAIN_HTTP} ]]; then
+        ORAS_OPTS+=(--plain-http)
+    fi
+    # The repository without tag, as a tag and a digest do not combine in oras
+    REPO="${IMAGE_NAME%@*}"
+    [[ "${REPO##*/}" == *:* ]] && REPO="${REPO%:*}"
+    # Digests only: they come from the registry, and name the fetches below
+    if ! bundles="$(oras discover "${ORAS_OPTS[@]}" --format json \
+        --artifact-type application/vnd.dev.sigstore.bundle.v0.3+json "${REPO}@${IMAGE_DIGEST}" |
+        jq -r '.referrers[].digest | select(test("^sha256:[0-9a-f]{64}$"))')"; then
+        log "[FAIL] Signature verification FAILED for ${IMAGE_REF}: cannot list its referrers"
+        echo "Image signature verification failed for ${IMAGE_NAME}"
+        exit 1
+    fi
+    if [[ -z "${bundles}" ]]; then
+        log "[FAIL] Signature verification FAILED for ${IMAGE_REF}: no Sigstore bundle"
+        echo "Image signature verification failed for ${IMAGE_NAME}"
+        exit 1
+    fi
+    max_bytes="${VERIFY_MAX_BUNDLE_BYTES:-1048576}"
+    bundle_file="$(mktemp --suffix=.json)"
+    trap 'rm -f -- "${bundle_file}"' EXIT
+    last=""
+    readarray -t bundle_digests <<< "${bundles}"
+    for bundle in "${bundle_digests[@]}"; do
+        out="cannot fetch bundle ${bundle}"
+        # A bundle is a few KiB; the registry's size claim and the bytes read
+        # are both capped, so an unauthenticated blob cannot fill the disk
+        if layer="$(oras manifest fetch "${ORAS_OPTS[@]}" "${REPO}@${bundle}" |
+            jq -re --argjson max "${max_bytes}" \
+                '.layers[0] | select(.size <= $max and (.digest | test("^sha256:[0-9a-f]{64}$"))) | .digest')" &&
+            oras blob fetch "${ORAS_OPTS[@]}" --output - "${REPO}@${layer}" |
+            head -c "$((max_bytes + 1))" > "${bundle_file}" &&
+            [[ "$(stat -c %s "${bundle_file}")" -le "${max_bytes}" ]] &&
+            out="$(cosign verify-blob-attestation "${VERIFY_ARGS[@]}" --bundle "${bundle_file}" 2>&1)"; then
+            log "[OK] Signature verification PASSED for ${IMAGE_REF}"
+            exit 0
+        fi
+        last="$(tail -n 1 <<< "${out}")"
+    done
+    log "[FAIL] Signature verification FAILED for ${IMAGE_REF}: ${last}"
+    echo "Image signature verification failed for ${IMAGE_NAME}"
+    exit 1
 fi
 
+# Anything else is a root CA PEM: verify legacy attached signatures.
 if out="$(cosign verify \
-    "${VERIFY_ARGS[@]}" \
+    --new-bundle-format=false --ca-roots="${CA_CERT_PATH}" --private-infrastructure \
     --certificate-identity-regexp '.*' \
     --certificate-oidc-issuer-regexp '.*' \
     --insecure-ignore-sct=true \
     "${IMAGE_REF}" 2>&1)"; then
-
     log "[OK] Signature verification PASSED for ${IMAGE_REF}"
     exit 0
 else

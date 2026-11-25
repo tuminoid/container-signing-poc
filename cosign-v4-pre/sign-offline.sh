@@ -21,6 +21,9 @@
 #                 carries leaf plus intermediate; unset, the leaf alone
 #   TSA_URL       optional: RFC 3161 timestamp authority. Set, the bundle
 #                 carries a signed timestamp over the signature
+#   ANNOTATIONS   optional: JSON object of strings, signed into the subject
+#                 annotations, as cosign sign -a does; cosign verify -a and
+#                 Kyverno's attestor annotations check them
 #   PLAIN_HTTP    true (default) for a plain http registry, false for TLS. A
 #                 registry CA outside the system roots goes in SSL_CERT_FILE
 #
@@ -35,6 +38,7 @@ LEAF="${LEAF:?LEAF must point to the leaf certificate}"
 WORK_DIR="${WORK_DIR:?WORK_DIR must name a directory for the signing files}"
 INTERMEDIATE="${INTERMEDIATE:-}"
 TSA_URL="${TSA_URL:-}"
+ANNOTATIONS="${ANNOTATIONS-{\}}"
 PLAIN_HTTP="${PLAIN_HTTP:-true}"
 # oras runs from WORK_DIR, so a relative SSL_CERT_FILE is resolved here
 if [[ -n "${SSL_CERT_FILE:-}" ]]; then
@@ -44,6 +48,10 @@ fi
 
 if [[ ! "${IMAGE_REF}" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]]; then
 	echo "error: ${IMAGE_REF} is not a <registry>/<repo>@sha256:<digest> reference" >&2
+	exit 1
+fi
+if ! jq -e 'type == "object" and all(.[]; type == "string")' <<< "${ANNOTATIONS}" >/dev/null; then
+	echo "error: ANNOTATIONS must be a JSON object of strings: ${ANNOTATIONS}" >&2
 	exit 1
 fi
 DIGEST="${IMAGE_REF#*@}"
@@ -76,9 +84,9 @@ esac
 # state beyond the digest the developer already knows.
 # ---------------------------------------------------------------------------
 echo "==> [client] building in-toto statement for ${DIGEST}"
-jq -cn --arg d "${DIGEST_HEX}" '{
+jq -cn --arg d "${DIGEST_HEX}" --argjson a "${ANNOTATIONS}" '{
 	"_type": "https://in-toto.io/Statement/v1",
-	"subject": [ { "digest": { "sha256": $d }, "annotations": {} } ],
+	"subject": [ { "digest": { "sha256": $d }, "annotations": $a } ],
 	"predicateType": "https://sigstore.dev/cosign/sign/v1",
 	"predicate": {}
 }' | tr -d '\n' > "${WORK_DIR}/statement.json"

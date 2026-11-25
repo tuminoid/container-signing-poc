@@ -86,12 +86,13 @@ trusted-root-for = cat $(1)/sub-ca.crt $(1)/ca.crt > $(1)/ca-chain.pem && \
 	tsa trusted-root-tsa signing-config-tsa sign-tsa verify-tsa v4-tsa \
 	relocate v4-relocate v4-external-offline-tsa v4-san-required \
 	v4-offline-relocate v4-rsa v4-referrers v4-save-load v4-dev-signatures \
-	v4-rotation v4-multiarch v4-shapes v4-tls v4-leaf-expiry
+	v4-rotation v4-multiarch v4-shapes v4-tls v4-leaf-expiry v4-repo-binding \
+	v4-legacy-fallback v4-devcerts devkit-check devkit-files
 
 all:
 	@echo "targets: test v4-external-offline v4-external-plugin v4-tsa v4-external-offline-tsa v4-relocate v4-san-required"
 	@echo "         v4-offline-relocate v4-rsa v4-referrers v4-save-load v4-dev-signatures v4-rotation v4-multiarch v4-shapes"
-	@echo "         v4-tls v4-leaf-expiry"
+	@echo "         v4-tls v4-leaf-expiry v4-repo-binding v4-legacy-fallback v4-devcerts"
 	@echo "         setup sign verify clean"
 
 check-tools:
@@ -568,6 +569,205 @@ v4-shapes: setup-nokey trusted-root-tsa
 		$(call ref,shapes/chain-tsa) >/dev/null
 	$(VERIFY) --trusted-root=$(TRUSTED_ROOT_TSA) $(call ref,shapes/leaf) >/dev/null
 	@echo "[OK] three bundle shapes signed, each verified by cosign"
+
+# Repository binding. A bundle signs the image digest alone, so the bundle of
+# binding/app, copied into binding/other, verifies there, and cosign verify
+# reports binding/other as its docker-reference, a name the bundle does not
+# hold. Two bindings refuse the copy: a signed subject annotation, checked by
+# cosign verify -a and Kyverno's attestor annotations
+# (../kyverno/bundle-binding.mk), and a certificate identity per repository,
+# but that one only with a key per repository: over one key, the copy's bundle
+# with the binding/other certificate swapped in verifies as binding/other,
+# where the binding/other certificate of another key, own, fails. The
+# swapped bundle on binding/other stays for Kyverno.
+BINDING := $(EXAMPLES_DIR)/binding
+SIGNER := https://signing.example.com
+# $(call pinned,repo): cosign verify pinned to the certificate identity of repo
+pinned = $(COSIGN_BIN) verify --certificate-identity=$(SIGNER)/$(1) \
+	--certificate-oidc-issuer-regexp '.*' --insecure-ignore-tlog --insecure-ignore-sct \
+	--use-signed-timestamps --trusted-root=$(TRUSTED_ROOT_TSA)
+
+# $(call swap,cert,repo): attach to repo the bundle of binding/app with cert
+swap = jq --arg c "$$(openssl x509 -in $(1) -outform DER | base64 -w0)" \
+		'.verificationMaterial.certificate.rawBytes = $$c' $(BINDING)/bundle.json > $(BINDING)/swapped.json && \
+	cd $(BINDING) && oras attach --plain-http --artifact-type $(BUNDLE_TYPE) \
+		--annotation dev.sigstore.bundle.content=dsse-envelope \
+		--annotation dev.sigstore.bundle.predicateType=https://sigstore.dev/cosign/sign/v1 \
+		$(call ref,$(2)) swapped.json:$(BUNDLE_TYPE)
+
+v4-repo-binding: setup-nokey trusted-root-tsa
+	mkdir -p $(BINDING)
+	openssl ecparam -name secp384r1 -genkey -noout -out $(BINDING)/own.key
+	for r in app other own; do \
+		key=$(EXAMPLES_DIR)/leaf.key; san=$$r; \
+		[ $$r = own ] && { key=$(BINDING)/own.key; san=other; }; \
+		openssl req -new -key $$key -subj /CN=signing-$$r -out $(BINDING)/$$r.csr && \
+		openssl x509 -req -days 1 -in $(BINDING)/$$r.csr -CA $(EXAMPLES_DIR)/sub-ca.crt \
+			-CAkey $(EXAMPLES_DIR)/sub-ca.key -CAcreateserial \
+			-extfile <(printf '%s\n' 'basicConstraints=critical,CA:FALSE' \
+				'keyUsage=critical,digitalSignature' 'extendedKeyUsage=codeSigning' \
+				"subjectAltName=URI:$(SIGNER)/$$san") \
+			-out $(BINDING)/$$r.crt || exit 1; \
+	done
+	$(call copy-image,binding/app)
+	ANNOTATIONS='{"repository": "app"}' TSA_URL=$(TSA_URL) KEY=$(EXAMPLES_DIR)/leaf.key \
+		LEAF=$(BINDING)/app.crt WORK_DIR=$(BINDING) ./sign-offline.sh $(call ref,binding/app)
+	for r in other own; do \
+		oras cp -r --from-plain-http --to-plain-http $(call ref,binding/app) \
+			$(TEST_REGISTRY)/binding/$$r:$(TEST_IMAGE_TAG) || exit 1; \
+	done
+	@out=$$($(VERIFY_TSA) --trusted-root=$(TRUSTED_ROOT_TSA) $(call ref,binding/other)) && \
+		jq -e --arg r '$(call ref,binding/other)' '.[0].critical.identity["docker-reference"] == $$r' \
+			<<< "$$out" >/dev/null || \
+		{ echo "[FAIL] the copy did not verify as $(call ref,binding/other)"; exit 1; }
+	@jq -r .dsseEnvelope.payload $(BINDING)/bundle.json | base64 -d | \
+		jq -e '.subject == [{"digest": {"sha256": "$(subst sha256:,,$(TEST_DIGEST_LOCAL))"}, "annotations": {"repository": "app"}}]' \
+		>/dev/null || { echo "[FAIL] the statement holds more than the digest and the annotation"; exit 1; }
+	@echo "[OK] the bundle of binding/app verifies in binding/other, and names no repository"
+	$(VERIFY_TSA) -a repository=app --trusted-root=$(TRUSTED_ROOT_TSA) $(call ref,binding/app) >/dev/null
+	@$(call refuse,the copy with the annotation of binding/other,missing or incorrect annotation,\
+		$(VERIFY_TSA) -a repository=other --trusted-root=$(TRUSTED_ROOT_TSA) $(call ref,binding/other))
+	$(call pinned,app) $(call ref,binding/app) >/dev/null
+	@$(call refuse,the copy with the identity of binding/other,expected SAN value,\
+		$(call pinned,other) $(call ref,binding/other))
+	$(call swap,$(BINDING)/own.crt,binding/own)
+	@$(call refuse,the copy with the binding/other certificate of another key,accepted signatures do not match threshold,\
+		$(call pinned,other) $(call ref,binding/own))
+	$(call swap,$(BINDING)/other.crt,binding/other)
+	$(call pinned,other) $(call ref,binding/other) >/dev/null
+	@echo "[OK] the annotation binds the repository; the identity binds it only with a key per repository"
+
+# Legacy fallback. On an image without a bundle cosign 3.x verifies a legacy
+# signature instead, with no warning, though every flag asks for a bundle: the
+# admissible verification, signed timestamps required, accepts a legacy
+# signature by the same PKI without a timestamp. legacy/alpine carries that
+# signature alone, attached the legacy way, the one deprecated path here and
+# cosign 3.x only. Cosign main refuses it (tripwire-cosign-main); the
+# containerd verifier requires a bundle first (../containerd test 14).
+LEGACY := $(EXAMPLES_DIR)/legacy
+
+v4-legacy-fallback: setup-nokey trusted-root-tsa
+	mkdir -p $(LEGACY)
+	$(call copy-image,legacy/alpine)
+	$(COSIGN_BIN) generate $(call ref,legacy/alpine) > $(LEGACY)/payload.json
+	openssl dgst -sha256 -sign $(EXAMPLES_DIR)/leaf.key -out $(LEGACY)/payload.sig $(LEGACY)/payload.json
+	base64 -w0 $(LEGACY)/payload.sig > $(LEGACY)/payload.b64
+	$(COSIGN_BIN) attach signature --payload $(LEGACY)/payload.json --signature $(LEGACY)/payload.b64 \
+		--certificate $(EXAMPLES_DIR)/leaf.crt --certificate-chain $(EXAMPLES_DIR)/certificate_chain.pem \
+		$(call ref,legacy/alpine)
+	@$(call expect-bundles,$(call ref,legacy/alpine),0)
+	$(VERIFY_TSA) --allow-certificate-chain --trusted-root=$(TRUSTED_ROOT_TSA) $(call ref,legacy/alpine) >/dev/null
+	@echo "[OK] no bundle: cosign verified a legacy signature without timestamp under the bundle flags"
+
+# The EPPKI C1 dev kit through the production flow. DEVCERTS is the absolute
+# path of the extracted kit, kept out of the repository; devcerts.sh lays out
+# each of its container certificates, RSA 4096 with one URI SAN, the same for
+# all, and no extended key usage. Each signs devcerts/<case> without cosign,
+# verified with the SAN pinned and the issuer empty, against the kit's root and
+# SubCA_C1_dev_2, the issuer of the valid certificate:
+#   ok          valid                            verifies
+#   revoked     revoked in SubCA_C1_dev_2's CRL  verifies, no CRL is read
+#   expired     expired in 2024                  fails, at the signing time
+#   revoked-ca  issued by SubCA_C1_dev_5, which  fails; with SubCA_C1_dev_5 in
+#               the root's CRL revokes           the trusted root, verifies
+# openssl verify with the kit's CRLs refuses the revoked leaf and
+# SubCA_C1_dev_5 itself, so the kit is what it says. Leaving the SubCA out of
+# the trusted root revokes it only where no bundle may bring its own
+# intermediate: revoked-ca-chain, the same leaf with SubCA_C1_dev_5 in the
+# bundle, chains to the shared root and verifies with --allow-certificate-chain,
+# and is refused without it. The signer pin refuses another SAN. The valid key
+# signing with PSS padding, SHA-256 or SHA-512, fails: cosign verifies an RSA
+# certificate with PKCS#1 v1.5 only.
+DEVCERTS ?=
+DEVKIT := $(EXAMPLES_DIR)/devcerts
+DEVKIT_ROOT := $(DEVKIT)/trusted-root.json
+DEVKIT_ROOT_CA5 := $(DEVKIT)/trusted-root-ca5.json
+DEVKIT_SAN := https://www.ericsson.com/en/about-us/security/pki
+DEVKIT_CASES := ok:SSW_DEV_OK_CONT_202101010000_C1_2_1 revoked:SSW_DEV_CONT_RIP_20240101000_C1_2_2 \
+	expired:SSW_DEV_CONT_RIP_20240101000_C1_2_3 revoked-ca:SSW_DEV_CONT_RIP_20240101000_C1_5_1
+# $(call devkit-verify,trusted root,case): cosign verify pinned to the kit's SAN
+devkit-verify = $(COSIGN_BIN) verify --certificate-identity=$(DEVKIT_SAN) \
+	--certificate-oidc-issuer-regexp '^$$' --insecure-ignore-tlog --insecure-ignore-sct \
+	--use-signed-timestamps --trusted-root=$(1) $(call ref,devcerts/$(2))
+# $(call devkit-crl,case,CRL...,certificate): openssl verify of the case's
+# certificate, leaf.crt or sub-ca.crt, against the kit's CRLs; depth 0 is it
+devkit-crl = for c in $(2); do openssl crl -inform der -in "$(DEVCERTS)/$$c"; done > $(DEVKIT)/$(1)/crls.pem && \
+	cat $(DEVKIT)/$(1)/crls.pem $(DEVKIT)/$(1)/ca.crt > $(DEVKIT)/$(1)/crl-chain.pem && \
+	openssl verify -crl_check_all -CAfile $(DEVKIT)/$(1)/crl-chain.pem \
+		-untrusted $(DEVKIT)/$(1)/sub-ca.crt $(DEVKIT)/$(1)/$(3) 2>&1
+# $(call devkit-pss,digest): the bundle of ok, signed again with PSS, on devcerts/pss-<digest>
+devkit-pss = d=$(DEVKIT)/pss-$(1) && mkdir -p $$d && \
+	openssl dgst -$(1) -sign $(DEVKIT)/ok/leaf.key -sigopt rsa_padding_mode:pss \
+		-sigopt rsa_pss_saltlen:digest -out $$d/payload.sig $(DEVKIT)/ok/payload.pae && \
+	openssl ts -query -data $$d/payload.sig -sha256 -cert -out $$d/payload.tsq && \
+	curl -sf -H 'Content-Type: application/timestamp-query' --data-binary @$$d/payload.tsq \
+		-o $$d/payload.tsr $(TSA_URL) && \
+	jq --arg s "$$(base64 -w0 < $$d/payload.sig)" --arg t "$$(base64 -w0 < $$d/payload.tsr)" \
+		'.dsseEnvelope.signatures[0].sig = $$s | .verificationMaterial.timestampVerificationData.rfc3161Timestamps[0].signedTimestamp = $$t' \
+		$(DEVKIT)/ok/bundle.json > $$d/bundle.json && \
+	$(call copy-image,devcerts/pss-$(1)) && \
+	cd $$d && oras attach --plain-http --artifact-type $(BUNDLE_TYPE) \
+		--annotation dev.sigstore.bundle.content=dsse-envelope \
+		--annotation dev.sigstore.bundle.predicateType=https://sigstore.dev/cosign/sign/v1 \
+		$(call ref,devcerts/pss-$(1)) bundle.json:$(BUNDLE_TYPE)
+
+# The kit files v4-devcerts reads, relative to DEVCERTS; ../vm copies these
+# alone into a VM
+DEVKIT_FILES := SSW_Root_CA_C1_dev.cacert.pem SSW_Root_CA_C1_dev.crl6 \
+	SSW_SubCA_C1_dev_2.cacert.pem SSW_SubCA_C1_dev_5.cacert.pem \
+	cont-certs/SSW_SubCA_C1_dev_2.crl5 \
+	$(foreach c,$(DEVKIT_CASES),cont-certs/$(lastword $(subst :, ,$(c))).pem cont-certs/$(lastword $(subst :, ,$(c))).key)
+
+# Callers run it before clean, which would remove a kit kept under examples/
+devkit-check:
+	@case "$(DEVCERTS)" in /*) ;; *) echo "error: DEVCERTS must be an absolute path"; exit 1 ;; esac
+	@case "$$(realpath -m "$(DEVCERTS)")/" in "$(realpath $(CURDIR))/$(EXAMPLES_DIR)/"*) \
+		echo "error: DEVCERTS is under $(EXAMPLES_DIR)/, which clean removes"; exit 1 ;; esac
+	@for f in $(DEVKIT_FILES); do [ -r "$(DEVCERTS)/$$f" ] || \
+		{ echo "error: $(DEVCERTS)/$$f missing; DEVCERTS must be the extracted EPPKI C1 dev kit"; exit 1; }; done
+
+devkit-files:
+	@echo $(DEVKIT_FILES)
+
+v4-devcerts: devkit-check setup-nokey trusted-root-tsa
+	for c in $(DEVKIT_CASES); do \
+		DEV_CERT=$${c#*:} OUTPUT_DIR=$(DEVKIT)/$${c%%:*} ./devcerts.sh && \
+		$(call copy-image,devcerts/$${c%%:*}) && \
+		TSA_URL=$(TSA_URL) $(call offline,$(DEVKIT)/$${c%%:*}) $(call ref,devcerts/$${c%%:*}) || exit 1; \
+	done
+	$(call copy-image,devcerts/revoked-ca-chain)
+	TSA_URL=$(TSA_URL) INTERMEDIATE=$(DEVKIT)/revoked-ca/sub-ca.crt KEY=$(DEVKIT)/revoked-ca/leaf.key \
+		LEAF=$(DEVKIT)/revoked-ca/leaf.crt WORK_DIR=$(DEVKIT)/revoked-ca-chain ./sign-offline.sh \
+		$(call ref,devcerts/revoked-ca-chain)
+	$(call trusted-root-for,$(DEVKIT)/ok,$(DEVKIT_ROOT))
+	cat $(DEVKIT)/revoked-ca/sub-ca.crt $(DEVKIT)/revoked-ca/ca.crt > $(DEVKIT)/revoked-ca/ca-chain.pem
+	$(COSIGN_BIN) trusted-root create $(TSA_SPEC) \
+		--fulcio="url=https://private.local,certificate-chain=$(DEVKIT)/ok/ca-chain.pem" \
+		--fulcio="url=https://private.local,certificate-chain=$(DEVKIT)/revoked-ca/ca-chain.pem" \
+		--out=$(DEVKIT_ROOT_CA5)
+	@out=$$($(call devkit-crl,ok,SSW_Root_CA_C1_dev.crl6 cont-certs/SSW_SubCA_C1_dev_2.crl5,leaf.crt)) && \
+		grep -q ': OK$$' <<< "$$out" || { echo "[FAIL] ok refused with the kit's CRLs: $$out"; exit 1; }
+	@out=$$($(call devkit-crl,revoked,SSW_Root_CA_C1_dev.crl6 cont-certs/SSW_SubCA_C1_dev_2.crl5,leaf.crt)); \
+		grep -q 'error 23 at 0 depth' <<< "$$out" || { echo "[FAIL] the revoked leaf not revoked by the kit's CRLs: $$out"; exit 1; }
+	@out=$$($(call devkit-crl,revoked-ca,SSW_Root_CA_C1_dev.crl6,sub-ca.crt)); \
+		grep -q 'error 23 at 0 depth' <<< "$$out" || { echo "[FAIL] SubCA_C1_dev_5 not revoked by the root's CRL: $$out"; exit 1; }
+	@echo "[OK] the kit's CRLs revoke the revoked leaf and SubCA_C1_dev_5, and pass ok"
+	$(call devkit-verify,$(DEVKIT_ROOT),ok) >/dev/null
+	$(call devkit-verify,$(DEVKIT_ROOT),revoked) >/dev/null
+	@$(call refuse,expired leaf,$(LEAF_FAILED),$(call devkit-verify,$(DEVKIT_ROOT),expired))
+	@$(call refuse,revoked-ca without SubCA_C1_dev_5 in the trusted root,$(LEAF_FAILED),\
+		$(call devkit-verify,$(DEVKIT_ROOT),revoked-ca))
+	$(call devkit-verify,$(DEVKIT_ROOT_CA5),revoked-ca) >/dev/null
+	@$(call refuse,revoked-ca-chain without --allow-certificate-chain,no signatures found\|no valid bundles exist in registry,\
+		$(call devkit-verify,$(DEVKIT_ROOT),revoked-ca-chain))
+	$(call devkit-verify,$(DEVKIT_ROOT),revoked-ca-chain) --allow-certificate-chain >/dev/null
+	@$(call refuse,ok pinned to another SAN,expected SAN value,\
+		$(subst $(DEVKIT_SAN),$(SIGNER),$(call devkit-verify,$(DEVKIT_ROOT),ok)))
+	for h in sha256 sha512; do ($(call devkit-pss,$$h)) || exit 1; done
+	@for h in sha256 sha512; do $(call refuse,the valid key with PSS and $$h,accepted signatures do not match threshold,\
+		$(call devkit-verify,$(DEVKIT_ROOT),pss-$$h)); done
+	@echo "[OK] dev kit: ok verifies, revoked verifies without CRL, expired fails, the revoked CA verifies until dropped,"
+	@echo "     or with its own intermediate under --allow-certificate-chain, another SAN fails, PSS fails"
 
 clean:
 	rm -rf $(EXAMPLES_DIR)

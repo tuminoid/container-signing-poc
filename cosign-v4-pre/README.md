@@ -45,6 +45,9 @@ make v4-shapes            # three bundle shapes for the Kyverno tripwires
 make v4-tls               # cosign-free signing and verification on a TLS registry
 make v4-leaf-expiry       # timestamped bundle outlives its leaf, untimestamped not
 make v4-san-required      # registered-ID-only leaf must fail verification
+make v4-repo-binding      # a bundle names no repository; annotation and identity bindings
+make v4-legacy-fallback   # without a bundle, cosign 3.x verifies a legacy signature
+make v4-devcerts DEVCERTS=/abs/kit  # the EPPKI C1 dev kit through the production flow
 make clean                # tear down
 ```
 
@@ -180,6 +183,7 @@ TSA_URL=http://tsa.example.com/api/v1/timestamp \
 | `WORK_DIR` | created if missing; receives the statement, PAE, signature and `bundle.json` |
 | `INTERMEDIATE` | optional intermediate certificate, PEM: set, the bundle carries leaf plus intermediate |
 | `TSA_URL` | optional RFC 3161 timestamp authority: set, the bundle carries a signed timestamp |
+| `ANNOTATIONS` | optional JSON object of strings, signed into the in-toto subject annotations as `cosign sign -a` does; `cosign verify -a` and Kyverno's `attestors[].cosign.annotations` check them (`make v4-repo-binding`). Unset means `{}`; set but empty or not such an object is refused |
 | `PLAIN_HTTP` | `true` (default) for a plain http registry, `false` for TLS. A registry CA outside the system roots goes in `SSL_CERT_FILE`, which oras reads (`make v4-tls`) |
 
 The Kyverno-admissible shape is `TSA_URL` set and `INTERMEDIATE` unset, with
@@ -326,9 +330,99 @@ and in Kyverno alike, and on the legacy `cosign verify` path with `got subjects
 attestor, accept it. Check the certificate profile before migrating;
 `make v4-san-required` asserts the failure with a registered-ID-only leaf.
 
+### A bundle names no repository
+
+The in-toto statement of a bundle holds the image digest and the subject
+annotations, nothing else: `cosign/sign/v1` has an empty predicate. The
+legacy simple signing payload held `critical.identity.docker-reference`, which
+CRI-O's `signedIdentity: matchRepository` checks (`../crio` test 6). A bundle
+copied with its referrers into another repository therefore verifies there,
+and `cosign verify` prints that repository as the `docker-reference`, which
+it made up from the reference it was given. Any image signed under a CA and
+identity the policy trusts can be served under any repository name the
+policy covers.
+
+`make v4-repo-binding` signs `binding/app` with `ANNOTATIONS={"repository":
+"app"}` and a leaf whose URI SAN ends in `/app`, copies it to
+`binding/other`, and asserts:
+
+| Binding | Copy in `binding/other` |
+| -- | -- |
+| none | verifies, `docker-reference` `binding/other` |
+| signed annotation, `cosign verify -a repository=other` | refused, `missing or incorrect annotation` |
+| certificate identity per repository, `--certificate-identity .../other` | refused, `expected SAN value` |
+| the same, with an `/other` certificate over another key swapped into the bundle | refused, `accepted signatures do not match threshold` |
+| the same, with the `/other` certificate over the same key swapped into the bundle | verifies |
+
+The certificate is outside the signed payload, so an identity binds the
+repository only when each repository's certificate has its own key. A signed
+annotation binds it over one key, once each policy requires its own value;
+`../kyverno/bundle-binding.mk` does that with one `ImageValidatingPolicy`
+per repository. The annotation is a convention between signer and policy:
+nothing in cosign or Kyverno ties its value to the pulled name, and an image
+whose policy requires no annotation is not bound.
+
+### Without a bundle, cosign 3.x verifies a legacy signature
+
+`cosign verify` with `--trusted-root` and `--allow-certificate-chain` looks for
+bundles first; finding none, or failing to fetch them, it verifies legacy
+`.sig` signatures instead, with no warning (`cmd/cosign/cli/verify/verify.go`
+resets `NewBundleFormat`). On that path `--use-signed-timestamps` requires no
+timestamp. `make v4-legacy-fallback` attaches a legacy signature by the same
+PKI, no timestamp, no bundle, and asserts the admissible verification passes.
+Kyverno 1.20 admits it under the bundle policy (`../kyverno/bundle-shapes.mk`).
+Cosign main has no legacy path and refuses it (`make tripwire-cosign-main`);
+the containerd verifier verifies each bundle referrer with `cosign
+verify-blob-attestation`, which has none either (`../containerd` test 14).
+The PKI is the same, so this weakens the timestamp requirement and the move
+to bundles, not who may sign.
+
+### The EPPKI C1 dev kit
+
+`make v4-devcerts DEVCERTS=<absolute path>` takes the extracted kit, which
+stays outside the repository, and `devcerts.sh` lays out each of its
+container certificates as `gencrt.sh` lays out its own, so it also serves as
+`CERT_SCRIPT` for `../cosign-v2`. The certificates are RSA 4096 with one URI
+SAN, `https://www.ericsson.com/en/about-us/security/pki` in all of them, and
+no extended key usage. Each signs `devcerts/<case>` with `sign-offline.sh`
+and a timestamp, verified with the SAN pinned and the issuer `^$`, against
+the kit's root and `SubCA_C1_dev_2`:
+
+| Certificate | Kit says | cosign |
+| -- | -- | -- |
+| `SSW_DEV_OK_CONT_..._C1_2_1` | valid | verifies |
+| `SSW_DEV_CONT_RIP_..._C1_2_2` | revoked by `SSW_SubCA_C1_dev_2.crl5` | verifies: no CRL is read |
+| `SSW_DEV_CONT_RIP_..._C1_2_3` | expired 2024 | fails, `failed to verify leaf certificate` |
+| `SSW_DEV_CONT_RIP_..._C1_5_1` | its `SSW_SubCA_C1_dev_5` revoked by `SSW_Root_CA_C1_dev.crl6` | fails without `SSW_SubCA_C1_dev_5` in the trusted root, verifies with it |
+| the same, `SSW_SubCA_C1_dev_5` in the bundle | as above | verifies with `--allow-certificate-chain`, refused without |
+
+`openssl verify -crl_check_all` with the kit's CRLs refuses the revoked leaf,
+and `SSW_SubCA_C1_dev_5` itself, and passes the valid one, so the kit is what
+it says. Revocation here is the trusted root: dropping a SubCA, or closing
+its validity window (`v4-rotation`), cuts all its certificates, and a single
+leaf cannot be revoked. Under a root shared by the SubCAs that holds only
+where the verifier takes no intermediate from the bundle: with
+`--allow-certificate-chain` a bundle carrying the dropped SubCA chains to the
+root and verifies. Kyverno never takes the chain, and the containerd verifier
+takes it only from a trusted root of root certificates alone. A policy
+pinned to another SAN refuses the valid certificate.
+
+The valid key signing the same statement with PSS padding fails with SHA-512,
+which the kit's README has radios and BCSS use, and with SHA-256, which
+sigstore's algorithm registry lists as `PKIX_RSA_PSS_4096_SHA256`: for an RSA
+certificate sigstore-go loads its default verifier, PKCS#1 v1.5. The signing
+server must sign PKCS#1 v1.5 with SHA-256, as `sign-offline.sh` does.
+
+The certificates share one SAN, so the certificate identity cannot tell
+repositories apart; the signed annotation of `v4-repo-binding` can.
+`../kyverno/bundle-devcerts.mk` and `../containerd` tests 16 to 21 run the
+same cases at admission and at pull; `../crio` `devkit-policy` shows that
+CRI-O's `policy.json` accepts none of these certificates.
+
 ## Not covered
 
-Rekor (deliberately absent), CRL or OCSP revocation (no Sigstore support), and
+Rekor (deliberately absent), CRL or OCSP revocation (no Sigstore support,
+shown with the dev kit's revoked certificates), and
 CRI-O / Podman runtime verification, whose library cannot read bundles
 (container-libs#388); `../crio` test 5 asserts that a bundle-only image is
 refused there.

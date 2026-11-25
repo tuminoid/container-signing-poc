@@ -137,7 +137,11 @@ make v4-relocate
 
 # Further flows, each asserting one finding, see cosign-v4-pre/README.md
 make v4-rsa v4-referrers v4-save-load v4-dev-signatures v4-rotation \
-    v4-multiarch v4-shapes v4-tls v4-leaf-expiry
+    v4-multiarch v4-shapes v4-tls v4-leaf-expiry v4-repo-binding \
+    v4-legacy-fallback
+
+# The EPPKI C1 dev kit, extracted outside the repository
+make v4-devcerts DEVCERTS=/abs/kit
 
 # Individual steps, idempotent after setup
 make setup
@@ -174,7 +178,8 @@ make -f cosign-v3.mk
 # DIGEST=false), and the further bundle flows
 make -f cosign-v4-pre.mk
 make -f bundle-dev.mk   # also bundle-zot.mk bundle-shapes.mk bundle-multiarch.mk
-                        # bundle-expiry.mk
+                        # bundle-expiry.mk bundle-binding.mk
+make -f bundle-devcerts.mk DEVCERTS=/abs/kit  # the EPPKI C1 dev kit
 
 # ClusterPolicy refused, ImageValidatingPolicy API versions
 make api-versions
@@ -290,6 +295,8 @@ the legacy flows pin 1.19, which runs both APIs, and the rest pin 1.20:
    (`policies.kyverno.io/v1`) replacement (`cosign-v3.mk`)
 1. `kyverno-policy-notation.yaml`: Notation signatures, root CA
 1. `kyverno-policy-bundle.yaml`: Sigstore bundles, inline trusted root
+1. `kyverno-policy-bundle-repository.yaml`: the same, one policy per
+   repository requiring its signed `repository` annotation (`bundle-binding.mk`)
 
 `__TRUST__` in each is replaced with the flow's CA or trusted root by
 `kyverno/common.mk`. Each flow signs elsewhere, relocates into the Kind
@@ -311,8 +318,10 @@ registry, and asserts unsigned is denied and signed is admitted and running.
 - This is the official/recommended approach since PR #8515 (Apr 2025)
 - Verifier binary in `/opt/containerd/image-verifier/bin/`
 - Config: `io.containerd.image-verifier.v1.bindir` plugin
-- Calls `cosign verify` with BYO-PKI certificates: a root CA PEM for legacy
-  signatures, or a trusted root `.json` for bundles
+- BYO-PKI per registry: a root CA PEM verifies legacy signatures with
+  `cosign verify`; a trusted root `.json` verifies each bundle referrer, found
+  with oras, with `cosign verify-blob-attestation`, which unlike `cosign
+  verify` 3.x never falls back to legacy signatures
 - **Limitation**: Only verifies on registry pulls (cached images bypass)
 - Requires VM with containerd 2.1+ runtime
 

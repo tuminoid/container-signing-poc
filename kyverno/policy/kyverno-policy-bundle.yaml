@@ -3,7 +3,8 @@
 # timestamp authority. The bundle must carry the leaf only and a signed
 # timestamp, see ../cosign-v4-pre/README.md. __DIGEST__ is DIGEST from
 # common.mk: true keeps Kyverno's defaults, false admits tag references as
-# they are.
+# they are. __SUBJECT__ is SUBJECT, the signer's URI SAN, matched exactly; a
+# private PKI certificate has no OIDC issuer, so the issuer must be empty.
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
@@ -32,8 +33,8 @@ spec:
         insecureIgnoreSCT: true
       keyless:
         identities:
-        - subjectRegExp: ".*"
-          issuerRegExp: ".*"
+        - subject: "__SUBJECT__"
+          issuerRegExp: "^$"
       trustedRoot:
         value: |-
           __TRUST__

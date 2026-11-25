@@ -178,11 +178,16 @@ install-hooks:
 # ../cosign-v4-pre: RSA 4096 leaf, leaf-only bundle, signed timestamp, CA chain
 # and TSA in the trusted root, plus the multi-arch images, and then, with the
 # same PKI and TSA, the timestamped bundle of a leaf that has expired once
-# v4-leaf-expiry returns. Its registry and TSA start afresh, so this runs, and
-# the verifier is reinstalled, on every test.
+# v4-leaf-expiry returns, and an image with a legacy signature alone. Its
+# registry and TSA start afresh, so this runs, and the verifier is
+# reinstalled, on every test.
+# With DEVCERTS, the extracted EPPKI C1 dev kit, v4-devcerts signs with it too.
 sign-image-v4:
-	$(MAKE) -C ../cosign-v4-pre clean v4-multiarch
-	$(MAKE) -C ../cosign-v4-pre v4-leaf-expiry -o setup-nokey -o trusted-root-tsa
+	$(MAKE) -C ../cosign-v4-pre $(if $(DEVCERTS),devkit-check) clean v4-multiarch
+	$(MAKE) -C ../cosign-v4-pre v4-leaf-expiry v4-legacy-fallback \
+		$(if $(DEVCERTS),v4-devcerts) -o setup-nokey -o trusted-root-tsa
+	$(if $(DEVCERTS),oras cp -r --from-plain-http --to-plain-http \
+		127.0.0.1:5004/devcerts/ok:3.20.3 127.0.0.1:5004/devcerts/other-san:3.20.3)
 
 verify:
 	@echo "==> Verifying signed image with BYO-PKI certificates..."
@@ -197,6 +202,9 @@ verify:
 		$(TEST_REGISTRY_PRIMARY)/$(TEST_IMAGE)
 	@echo ""
 	@echo "[OK] Signature verification successful!"
+
+# DEVCERTS reaches the test script from the environment, as make exports it
+export DEVCERTS
 
 run: check-vm
 	@if [[ ! -f "$(EXAMPLES_DIR)/leaf.key" ]]; then \

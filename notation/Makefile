@@ -43,7 +43,7 @@ install: build
 
 clean:
 	rm -f "$(SRC_DIR)/$(SRC_BIN)"
-	rm -rf "$(TGT_DIR)"
+	rm -f "$(TGT_DIR)/$(TGT_BIN)"
 	rm -f $(EXAMPLES_DIR)/*.{cer,crt,csr,key,pem,srl}
 	docker rm -f $(TEST_REGISTRY_NAME) 2>/dev/null || true
 	-notation cert delete -s external -t ca --all -y
